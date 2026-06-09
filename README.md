@@ -28,13 +28,18 @@ Add this to your project `opencode.json` or global `~/.config/opencode/opencode.
   "mcp": {
     "mini-sandbox": {
       "type": "local",
-      "command": ["npx", "-y", "github:SkipXS/mini-sandbox"]
+      "command": ["npx", "-y", "github:SkipXS/mini-sandbox"],
+      "env": {
+        "MINI_SANDBOX_SHELL": "bash"
+      }
     }
   }
 }
 ```
 
 Restart OpenCode after saving the config.
+
+`MINI_SANDBOX_SHELL` is optional. Set it when you want `sandbox_run` to use the same shell style as OpenCode, for example Git for Windows `bash`. Without it, Node uses the platform default shell (`cmd.exe` on Windows).
 
 ### From GitHub
 
@@ -45,7 +50,10 @@ Use directly from the GitHub repo with `npx`:
   "mcp": {
     "mini-sandbox": {
       "type": "local",
-      "command": ["npx", "-y", "github:SkipXS/mini-sandbox"]
+      "command": ["npx", "-y", "github:SkipXS/mini-sandbox"],
+      "env": {
+        "MINI_SANDBOX_SHELL": "bash"
+      }
     }
   }
 }

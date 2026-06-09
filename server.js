@@ -13,6 +13,7 @@ const MAX_LINES = 60;
 const MAX_BYTES = 32 * 1024;
 const MAX_COMMAND_BYTES = 100 * 1024 * 1024;
 const MAX_FETCH_BYTES = normalizeByteLimit(process.env.MINI_SANDBOX_MAX_FETCH_BYTES, 10 * 1024 * 1024);
+const COMMAND_SHELL = process.env.MINI_SANDBOX_SHELL || true;
 const CACHE_TTL_MS = 3_600_000;
 
 const CACHE_DIR = path.join(os.homedir(), ".mini-sandbox");
@@ -140,7 +141,7 @@ function errorData(error) {
 async function runCommand(command) {
   return await new Promise((resolve, reject) => {
     const child = spawn(command, {
-      shell: true,
+      shell: COMMAND_SHELL,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });

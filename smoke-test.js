@@ -86,6 +86,22 @@ try {
   assert.equal(ok.result.content[0].text, "ok\n");
   assert.equal(ok.result._meta.truncated, false);
 
+  if ((process.env.MINI_SANDBOX_SHELL ?? "").includes("bash")) {
+    const bashOnly = await request("tools/call", {
+      name: "sandbox_run",
+      arguments: { command: "printf 'configured-bash-ok\\n'" },
+    });
+    assert.equal(bashOnly.result.content[0].text.trim(), "configured-bash-ok");
+  }
+
+  if ((process.env.MINI_SANDBOX_SHELL ?? "").toLowerCase().includes("cmd")) {
+    const cmdOnly = await request("tools/call", {
+      name: "sandbox_run",
+      arguments: { command: "echo configured-cmd-ok" },
+    });
+    assert.equal(cmdOnly.result.content[0].text.trim(), "configured-cmd-ok");
+  }
+
   const failed = await request("tools/call", {
     name: "sandbox_run",
     arguments: { command: `${shellQuote(process.execPath)} -e "process.exit(7)"` },
