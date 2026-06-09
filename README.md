@@ -1,26 +1,85 @@
 # mini-sandbox
 
-A minimal MCP server that keeps large output out of your LLM context. Three tools, zero dependencies, works in any MCP-compatible client (Pi, OpenCode, Claude Code, KiloCode, etc.).
+A minimal MCP server that keeps large command, file, and web output out of your LLM context. Three tools, zero dependencies, works in MCP-compatible clients such as Pi, OpenCode, Claude Code, and KiloCode.
 
-## What it does
+## Tools
 
-When an LLM calls `bash` or `webfetch`, the **entire** output enters the context — every log line, every HTML tag, every navigation bar. That burns tokens fast.
-
-mini-sandbox gives the LLM two alternatives that **keep raw data out**:
-
-| Instead of | Use | What happens |
+| Tool | Use it for | Instead of |
 |---|---|---|
-| `bash "tail -10000 log.txt"` | `sandbox_run "tail -10000 log.txt"` | Command output capped at 60 lines (head+tail). The LLM sees it was truncated and can re-run with `maxLines: 200` or pre-filtering. |
-| `cat huge.log` / `type huge.log` | `sandbox_read "huge.log"` | Local file output capped at 60 lines without shell quoting or platform-specific commands. |
-| `webfetch "https://react.dev/..."` | `sandbox_fetch "https://react.dev/..."` | HTML stripped to readable text, then capped at 60 lines when large. Cached for 1 hour. No nav, no footer, no JavaScript. |
+| `sandbox_run` | Running shell commands when full stdout is not needed | `bash`, terminal, `tail -10000 log.txt` |
+| `sandbox_read` | Reading local UTF-8 text files safely | `cat huge.log`, `type huge.log`, `Get-Content huge.log` |
+| `sandbox_fetch` | Fetching web pages as readable text | `webfetch`, raw HTML downloads |
 
-The LLM learns when to use which because `instructions` are injected into the system prompt at startup.
+### `sandbox_run`
 
-## Install
+Runs a shell command and returns stdout. Output is automatically truncated when it exceeds 60 lines or 32 KB.
 
-Requirements: **Node.js >= 22**.
+```json
+{ "command": "find . -name '*.ts'", "maxLines": 100 }
+```
 
-### Quick Start: OpenCode
+Response `_meta` includes:
+
+```json
+{
+  "totalLines": 1200,
+  "totalBytes": 48000,
+  "truncated": true,
+  "durationMs": 230,
+  "shell": "bash"
+}
+```
+
+### `sandbox_read`
+
+Reads a local UTF-8 text file and returns a safe preview. Output is automatically truncated when it exceeds 60 lines or 32 KB.
+
+```json
+{ "path": "logs/app.log", "maxLines": 100 }
+```
+
+File reads are capped at 10 MB by default before formatting. Override with `MINI_SANDBOX_MAX_READ_BYTES` if needed.
+
+### `sandbox_fetch`
+
+Fetches a URL, strips HTML to readable text, caches the result for 1 hour, and truncates large output.
+
+```json
+{ "url": "https://example.com/docs", "force": false, "maxLines": 100 }
+```
+
+Downloads are capped at 10 MB by default before parsing/caching. Override with `MINI_SANDBOX_MAX_FETCH_BYTES` if needed.
+
+## How It Works
+
+When an LLM calls normal shell or web tools, the entire output can enter the model context: every log line, every HTML tag, every navigation bar. mini-sandbox gives the model smaller MCP tools that return only useful previews by default.
+
+Large output is returned as head + tail:
+
+```text
+╔══ 1200 lines · 46.9 KB · showing first 24 + last 36 ══╗
+...
+╟── … 1140 lines omitted … ──╢
+...
+╚══════════════════════════════════════════════════════════╝
+```
+
+The response always includes `_meta.truncated`. If it is `true`, the LLM can re-run with a higher `maxLines`, pre-filter the command, read a narrower file section via shell tools, or fall back to the native client tool when every line is genuinely needed.
+
+The server also injects MCP startup instructions telling the LLM when to prefer:
+
+- `sandbox_run` instead of shell/terminal commands
+- `sandbox_read` instead of `cat`, `type`, or `Get-Content`
+- `sandbox_fetch` instead of raw web fetches
+
+## Requirements
+
+- Node.js >= 22
+- No npm dependencies
+
+## Installation
+
+### OpenCode
 
 Add this to your project `opencode.json` or global `~/.config/opencode/opencode.json`:
 
@@ -42,43 +101,9 @@ Restart OpenCode after saving the config.
 
 `MINI_SANDBOX_SHELL` is optional. Set it when you want `sandbox_run` to use the same shell style as OpenCode, for example Git for Windows `bash`. Without it, Node uses the platform default shell (`cmd.exe` on Windows).
 
-### From GitHub
-
-Use directly from the GitHub repo with `npx`:
-
-```json
-{
-  "mcp": {
-    "mini-sandbox": {
-      "type": "local",
-      "command": ["npx", "-y", "github:SkipXS/mini-sandbox"],
-      "env": {
-        "MINI_SANDBOX_SHELL": "bash"
-      }
-    }
-  }
-}
-```
-
-Pin a version by using a tag once releases exist:
-
-```json
-"command": ["npx", "-y", "github:SkipXS/mini-sandbox#v1.0.0"]
-```
-
-### Local Checkout
-
-```bash
-cd mini-sandbox
-# nothing to install — just point Pi/OpenCode at server.js
-npm test # optional smoke test
-```
-
-## Configure
-
 ### Pi
 
-`~/.pi/agent/mcp.json`:
+Add this to `~/.pi/agent/mcp.json`:
 
 ```json
 {
@@ -98,7 +123,7 @@ npm test # optional smoke test
 
 Then `/reload` in Pi or restart Pi.
 
-`MINI_SANDBOX_SHELL` is optional. On Windows with Git for Windows you can use the full path if `bash` is not on `PATH`:
+On Windows with Git for Windows, use the full path if `bash` is not on `PATH`:
 
 ```json
 "env": {
@@ -106,86 +131,55 @@ Then `/reload` in Pi or restart Pi.
 }
 ```
 
-Pin a version by using a release tag:
-
-```json
-"args": ["-y", "github:SkipXS/mini-sandbox#v1.0.0"]
-```
-
-### OpenCode
-
-`opencode.json` (project or global `~/.config/opencode/opencode.json`):
-
-```json
-{
-  "mcp": {
-    "mini-sandbox": {
-      "type": "local",
-      "command": ["npx", "-y", "github:SkipXS/mini-sandbox"]
-    }
-  }
-}
-```
-
-Restart OpenCode.
-
 ### Claude Code
 
 ```bash
 claude mcp add mini-sandbox -- npx -y github:SkipXS/mini-sandbox
 ```
 
-## Tools
+If you need a specific command shell for `sandbox_run`, set `MINI_SANDBOX_SHELL` in the environment that starts Claude Code.
 
-### `sandbox_run`
+### Local Checkout
 
-Run a shell command. Output is auto-truncated when it exceeds 60 lines or 32 KB. `_meta` includes `durationMs` and the shell used for execution.
-
-```
-sandbox_run { command: "find . -name '*.ts'", maxLines?: 10..200 }
-```
-
-The response includes `_meta.truncated` — when `true`, the LLM knows to drill deeper:
-
-```
-sandbox_run "rg ERROR huge.log"           # pre-filter
-sandbox_run "tail -200 huge.log"          # narrower window
-sandbox_run "cat huge.log" maxLines: 200  # higher limit
+```bash
+git clone https://github.com/SkipXS/mini-sandbox.git
+cd mini-sandbox
+npm test
 ```
 
-Or fall back to `bash` when every line is genuinely needed.
+Then point your MCP client at the local `server.js` with Node.
 
-### `sandbox_read`
+## Version Pinning
 
-Read a local UTF-8 text file. Output is auto-truncated when it exceeds 60 lines or 32 KB.
-File reads are capped at 10 MB by default before formatting. Override with `MINI_SANDBOX_MAX_READ_BYTES` if needed.
+Use a tag once releases exist.
 
-```
-sandbox_read { path: "logs/app.log", maxLines?: 10..200 }
-```
+OpenCode command:
 
-Use this instead of `cat`, `type`, or `Get-Content` when you only need a safe preview of a potentially large file.
-
-### `sandbox_fetch`
-
-Fetch a URL, strip HTML to readable text, cap large output, cache for 1 hour.
-Downloads are capped at 10 MB by default before parsing/caching. Override with `MINI_SANDBOX_MAX_FETCH_BYTES` if needed.
-
-```
-sandbox_fetch { url: "https://example.com/docs", force?: false, maxLines?: 10..200 }
+```json
+["npx", "-y", "github:SkipXS/mini-sandbox#v1.0.0"]
 ```
 
-## Why so minimal?
+For Pi:
 
-**Context-mode** (the full solution this was inspired by) packs 11 MCP tools, SQLite FTS5, BM25 ranking, Porter stemming, Levenshtein typos, 26 event-type hooks, session continuity, and 4,500 system-prompt tokens of overhead. It saves ~66% context but costs ~50% more system-prompt tokens.
+```json
+"args": ["-y", "github:SkipXS/mini-sandbox#v1.0.0"]
+```
 
-**mini-sandbox** covers ~75% of the savings with 2 tools, 0 dependencies, and 3 lines of routing instructions. The remaining 25% gap is closed by teaching the LLM one pattern:
+## Environment Variables
 
-> Use `grep`/`rg`/`head`/`tail`/`jq` **inside** `sandbox_run` before you ever read a file into context.
+| Variable | Default | Purpose |
+|---|---:|---|
+| `MINI_SANDBOX_SHELL` | Node platform default | Shell used by `sandbox_run` |
+| `MINI_SANDBOX_MAX_FETCH_BYTES` | `10485760` | Max downloaded bytes before parsing/caching |
+| `MINI_SANDBOX_MAX_READ_BYTES` | `10485760` | Max file bytes read before previewing |
 
 ## Cache
 
-`~/.mini-sandbox/cache.json` — a flat JSON file mapping URL hashes to `{ timestamp, content }`. Delete it anytime to clear cache. Autocreated on first `sandbox_fetch`.
+`sandbox_fetch` caches fetched content for 1 hour in `~/.mini-sandbox/cache.json`. Delete that file anytime to clear the cache.
+
+## Why So Minimal?
+
+mini-sandbox intentionally avoids heavy indexing, databases, embeddings, and large system prompts. It covers the most common context-wasting cases with three small MCP tools and leaves full-output inspection to the native client tools when genuinely needed.
 
 ## License
 
