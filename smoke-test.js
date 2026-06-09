@@ -71,6 +71,30 @@ function shellQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+async function pathExists(filePath) {
+  try {
+    await import("node:fs/promises").then((fs) => fs.stat(filePath));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function findRgForTest() {
+  const rgName = process.platform === "win32" ? "rg.exe" : "rg";
+  const entries = (process.env.PATH ?? process.env.Path ?? "").split(process.platform === "win32" ? ";" : ":").filter(Boolean);
+  const candidates = [
+    ...entries.map((entry) => join(entry, rgName)),
+    join(process.env.USERPROFILE ?? process.env.HOME ?? "", ".cache", "opencode", "bin", rgName),
+    join(process.env.USERPROFILE ?? process.env.HOME ?? "", ".pi", "agent", "bin", rgName),
+  ];
+
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) return candidate;
+  }
+  return null;
+}
+
 try {
   tempDir = await mkdtemp(join(tmpdir(), "mini-sandbox-test-"));
   const largeFile = join(tempDir, "large.txt");
@@ -85,7 +109,7 @@ try {
   assert.deepEqual(unexpectedResponses, []);
 
   const listed = await request("tools/list", {});
-  assert.deepEqual(listed.result.tools.map((tool) => tool.name), ["sandbox_run", "sandbox_read", "sandbox_fetch"]);
+  assert.deepEqual(listed.result.tools.map((tool) => tool.name), ["sandbox_run", "sandbox_read", "sandbox_search", "sandbox_fetch"]);
 
   const ok = await request("tools/call", {
     name: "sandbox_run",
@@ -124,7 +148,7 @@ try {
     arguments: { command: `${shellQuote(process.execPath)} -e "setTimeout(() => console.log('slow'), 300)"` },
   });
   const listWhileRunning = await request("tools/list", {});
-  assert.equal(listWhileRunning.result.tools.length, 3);
+  assert.equal(listWhileRunning.result.tools.length, 4);
   const slowResult = await slow;
   assert.equal(slowResult.result.content[0].text, "slow\n");
 
@@ -136,6 +160,17 @@ try {
   assert.equal(read.result._meta.fileReadLimited, true);
   assert.match(read.result.content[0].text, /file line 0/);
   assert.match(read.result.content[0].text, /file line 299/);
+
+  const rgPath = await findRgForTest();
+  if (rgPath) {
+    const searched = await request("tools/call", {
+      name: "sandbox_search",
+      arguments: { pattern: "file line 29", path: largeFile, maxMatches: 5 },
+    });
+    assert.ok(searched.result, JSON.stringify(searched));
+    assert.match(searched.result.content[0].text, /file line 29/);
+    assert.equal(typeof searched.result._meta.rgPath, "string");
+  }
 
   const html = `<html><body>${Array.from({ length: 300 }, (_, i) => `<p>line ${i}</p>`).join("")}</body></html>`;
   const fetched = await request("tools/call", {

@@ -1,6 +1,6 @@
 # mini-sandbox
 
-A minimal MCP server that keeps large command, file, and web output out of your LLM context. Three tools, zero dependencies, works in MCP-compatible clients such as Pi, OpenCode, Claude Code, and KiloCode.
+A minimal MCP server that keeps large command, file, search, and web output out of your LLM context. Four tools, zero dependencies, works in MCP-compatible clients such as Pi, OpenCode, Claude Code, and KiloCode.
 
 ## Tools
 
@@ -8,6 +8,7 @@ A minimal MCP server that keeps large command, file, and web output out of your 
 |---|---|---|
 | `sandbox_run` | Running shell commands when full stdout is not needed | `bash`, terminal, `tail -10000 log.txt` |
 | `sandbox_read` | Reading local UTF-8 text files safely | `cat huge.log`, `type huge.log`, `Get-Content huge.log` |
+| `sandbox_search` | Searching local files with bounded ripgrep output | raw `rg` / `grep` commands |
 | `sandbox_fetch` | Fetching web pages as readable text | `webfetch`, raw HTML downloads |
 
 ### `sandbox_run`
@@ -40,6 +41,23 @@ Reads a local UTF-8 text file and returns a safe preview. Output is automaticall
 
 File reads are capped at 10 MB by default before formatting. Override with `MINI_SANDBOX_MAX_READ_BYTES` if needed.
 
+### `sandbox_search`
+
+Searches local files with ripgrep and returns bounded `file:line:match` output.
+
+```json
+{ "pattern": "ERROR", "path": "logs", "include": "*.log", "maxMatches": 100 }
+```
+
+mini-sandbox does not download ripgrep. It uses the first available binary from:
+
+- `MINI_SANDBOX_RG_PATH`
+- system `PATH`
+- OpenCode cache: `~/.cache/opencode/bin/rg` or `rg.exe`
+- Pi cache: `~/.pi/agent/bin/rg` or `rg.exe`
+
+If none is found, `sandbox_search` returns a clear error. The other tools do not need ripgrep.
+
 ### `sandbox_fetch`
 
 Fetches a URL, strips HTML to readable text, caches the result for 1 hour, and truncates large output.
@@ -70,6 +88,7 @@ The server also injects MCP startup instructions telling the LLM when to prefer:
 
 - `sandbox_run` instead of shell/terminal commands
 - `sandbox_read` instead of `cat`, `type`, or `Get-Content`
+- `sandbox_search` instead of raw `rg` or `grep` commands
 - `sandbox_fetch` instead of raw web fetches
 
 ## Requirements
@@ -170,6 +189,7 @@ For Pi:
 | Variable | Default | Purpose |
 |---|---:|---|
 | `MINI_SANDBOX_SHELL` | Node platform default | Shell used by `sandbox_run` |
+| `MINI_SANDBOX_RG_PATH` | auto-detect | Explicit path to `rg` / `rg.exe` for `sandbox_search` |
 | `MINI_SANDBOX_MAX_FETCH_BYTES` | `10485760` | Max downloaded bytes before parsing/caching |
 | `MINI_SANDBOX_MAX_READ_BYTES` | `10485760` | Max file bytes read before previewing |
 
@@ -179,7 +199,7 @@ For Pi:
 
 ## Why So Minimal?
 
-mini-sandbox intentionally avoids heavy indexing, databases, embeddings, and large system prompts. It covers the most common context-wasting cases with three small MCP tools and leaves full-output inspection to the native client tools when genuinely needed.
+mini-sandbox intentionally avoids heavy indexing, databases, embeddings, and large system prompts. It covers the most common context-wasting cases with four small MCP tools and leaves full-output inspection to the native client tools when genuinely needed.
 
 ## License
 

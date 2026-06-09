@@ -24,6 +24,7 @@ const CACHE_TTL_MS = 3_600_000;
 
 const CACHE_DIR = path.join(os.homedir(), ".mini-sandbox");
 const CACHE_FILE = path.join(CACHE_DIR, "cache.json");
+const RG_NAME = process.platform === "win32" ? "rg.exe" : "rg";
 
 fs.mkdirSync(CACHE_DIR, { recursive: true });
 
@@ -70,6 +71,45 @@ function normalizeMaxLines(maxLines = MAX_LINES) {
   const numeric = Number(maxLines);
   const value = Number.isFinite(numeric) ? Math.trunc(numeric) : MAX_LINES;
   return Math.max(10, Math.min(value, 200));
+}
+
+function normalizeLimit(value, fallback, min, max) {
+  const numeric = Number(value);
+  const parsed = Number.isFinite(numeric) ? Math.trunc(numeric) : fallback;
+  return Math.max(min, Math.min(parsed, max));
+}
+
+function pathEntries() {
+  const raw = process.env.PATH ?? process.env.Path ?? "";
+  return raw.split(path.delimiter).filter(Boolean);
+}
+
+async function isExecutable(filePath) {
+  try {
+    const stat = await fs.promises.stat(filePath);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function findRg() {
+  const candidates = [];
+
+  if (process.env.MINI_SANDBOX_RG_PATH) candidates.push(process.env.MINI_SANDBOX_RG_PATH);
+
+  for (const entry of pathEntries()) candidates.push(path.join(entry, RG_NAME));
+
+  candidates.push(
+    path.join(os.homedir(), ".cache", "opencode", "bin", RG_NAME),
+    path.join(os.homedir(), ".pi", "agent", "bin", RG_NAME),
+  );
+
+  for (const candidate of candidates) {
+    if (await isExecutable(candidate)) return candidate;
+  }
+
+  return null;
 }
 
 function formatOutput(output, maxLines = MAX_LINES) {
@@ -125,6 +165,64 @@ function commandError(command, code, signal, stdout, stderr, timedOut = false, o
   error.stdout = stdout;
   error.stderr = stderr;
   throw error;
+}
+
+async function runProcess(file, args, options = {}) {
+  return await new Promise((resolve, reject) => {
+    const started = Date.now();
+    const child = spawn(file, args, {
+      cwd: options.cwd,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+
+    const stdout = [];
+    const stderr = [];
+    let outputBytes = 0;
+    let timedOut = false;
+    let outputTooLarge = false;
+
+    function appendOutput(chunks, chunk) {
+      if (outputTooLarge) return;
+
+      const remaining = MAX_COMMAND_BYTES - outputBytes;
+      if (chunk.byteLength > remaining) {
+        if (remaining > 0) chunks.push(chunk.slice(0, remaining));
+        outputBytes = MAX_COMMAND_BYTES;
+        outputTooLarge = true;
+        child.kill();
+        return;
+      }
+
+      chunks.push(chunk);
+      outputBytes += chunk.byteLength;
+    }
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, options.timeout ?? 120_000);
+
+    child.stdout.on("data", (chunk) => appendOutput(stdout, chunk));
+    child.stderr.on("data", (chunk) => appendOutput(stderr, chunk));
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      resolve({
+        code,
+        signal,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+        durationMs: Date.now() - started,
+        timedOut,
+        outputTooLarge,
+      });
+    });
+  });
 }
 
 function errorData(error) {
@@ -290,6 +388,79 @@ async function readLimitedFile(filePath, size, maxBytes) {
   }
 }
 
+async function searchTool(args) {
+  const {
+    pattern,
+    path: searchPath = ".",
+    include,
+    maxMatches = 100,
+    maxLines = MAX_LINES,
+  } = args ?? {};
+
+  if (typeof pattern !== "string" || pattern.trim() === "") {
+    const error = new Error("sandbox_search requires a non-empty pattern string");
+    error.code = -32602;
+    throw error;
+  }
+  if (typeof searchPath !== "string" || searchPath.trim() === "") {
+    const error = new Error("sandbox_search requires path to be a non-empty string when provided");
+    error.code = -32602;
+    throw error;
+  }
+  if (include !== undefined && typeof include !== "string") {
+    const error = new Error("sandbox_search include must be a string when provided");
+    error.code = -32602;
+    throw error;
+  }
+
+  const rg = await findRg();
+  if (!rg) {
+    const error = new Error(
+      "ripgrep was not found. Install rg, set MINI_SANDBOX_RG_PATH, or run from OpenCode/Pi after their rg helper has been installed.",
+    );
+    error.code = -32000;
+    throw error;
+  }
+
+  const limit = normalizeLimit(maxMatches, 100, 1, 1000);
+  const rgArgs = ["--line-number", "--with-filename", "--color", "never", "--no-heading"];
+  if (include) rgArgs.push("--glob", include);
+  rgArgs.push(pattern, searchPath);
+
+  const result = await runProcess(rg, rgArgs, { cwd: process.cwd(), timeout: 120_000 });
+  if (result.code === 1) {
+    return {
+      content: [{ type: "text", text: "(no matches)" }],
+      _meta: { rgPath: rg, totalMatches: 0, shownMatches: 0, truncated: false, durationMs: result.durationMs },
+    };
+  }
+  if (result.code !== 0) {
+    commandError(`rg ${rgArgs.join(" ")}`, result.code, result.signal, result.stdout, result.stderr, result.timedOut, result.outputTooLarge);
+  }
+
+  const output = result.stdout.trimEnd();
+  const matches = output ? output.split("\n") : [];
+  const shown = matches.slice(0, limit);
+  const matchLimited = matches.length > limit;
+  const text = matchLimited
+    ? [...shown, `... ${matches.length - limit} matches omitted ...`].join("\n")
+    : output || "(no matches)";
+  const formatted = formatOutput(text, maxLines);
+
+  return {
+    content: [{ type: "text", text: formatted.text }],
+    _meta: {
+      rgPath: rg,
+      totalMatches: matches.length,
+      shownMatches: shown.length,
+      totalLines: formatted.totalLines,
+      totalBytes: formatted.totalBytes,
+      truncated: matchLimited || formatted.truncated,
+      durationMs: result.durationMs,
+    },
+  };
+}
+
 function htmlToText(html) {
   let text = html
     .replace(/<script[\s\S]*?<\/script>/gi, "")
@@ -415,6 +586,32 @@ const tools = {
       },
     },
     {
+      name: "sandbox_search",
+      description:
+        "Search local files with ripgrep and return bounded filename:line:match output. Uses system rg, OpenCode's cached rg, or Pi's cached rg when available.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          pattern: { type: "string", description: "Regex pattern to search for" },
+          path: { type: "string", description: "File or directory to search. Default: ." },
+          include: { type: "string", description: "File glob to include, for example *.js or *.{ts,tsx}" },
+          maxMatches: {
+            type: "integer",
+            minimum: 1,
+            maximum: 1000,
+            description: "Maximum matches before truncation. Default: 100.",
+          },
+          maxLines: {
+            type: "integer",
+            minimum: 10,
+            maximum: 200,
+            description: "Max output lines before head+tail truncation. Default: 60.",
+          },
+        },
+        required: ["pattern"],
+      },
+    },
+    {
       name: "sandbox_fetch",
       description:
         "Fetch a URL and return its content as plain text (HTML is stripped to readable text). Large output is automatically truncated to head+tail. Results are cached for 1 hour; use force=true to bypass.",
@@ -461,7 +658,7 @@ rl.on("line", async (line) => {
           protocolVersion: "2024-11-05",
           capabilities: { tools: {} },
           serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-          instructions: `Use sandbox_run instead of bash/terminal for any command whose full output you don't need. Use sandbox_read instead of cat/type/Get-Content for local files whose full content you don't need. Use sandbox_fetch instead of web_fetch/webfetch for any page you don't need raw HTML from. Read the _meta field after each call: if truncated is true, you can re-run with higher maxLines, pre-filter, or fall back to the native tool.`,
+          instructions: `Use sandbox_run instead of bash/terminal for any command whose full output you don't need. Use sandbox_read instead of cat/type/Get-Content for local files whose full content you don't need. Use sandbox_search instead of raw rg/grep commands when you need bounded local search results. Use sandbox_fetch instead of web_fetch/webfetch for any page you don't need raw HTML from. Read the _meta field after each call: if truncated is true, you can re-run with higher maxLines, pre-filter, or fall back to the native tool.`,
         },
       });
     } else if (method === "notifications/initialized") {
@@ -483,6 +680,13 @@ rl.on("line", async (line) => {
           if (hasId) send({ jsonrpc: "2.0", id, result });
         } catch (e) {
           sendErrorIfRequest(hasId, id, rpcCode(e), e.message, errorData(e));
+        }
+      } else if (name === "sandbox_search") {
+        try {
+          const result = await searchTool(args);
+          if (hasId) send({ jsonrpc: "2.0", id, result });
+        } catch (e) {
+          sendErrorIfRequest(hasId, id, rpcCode(e), e.message, commandErrorData(e) ?? errorData(e));
         }
       } else if (name === "sandbox_fetch") {
         try {
