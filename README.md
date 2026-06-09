@@ -19,6 +19,23 @@ The LLM learns when to use which because `instructions` are injected into the sy
 
 Requirements: **Node.js >= 22**.
 
+### Quick Start: OpenCode
+
+Add this to your project `opencode.json` or global `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "mini-sandbox": {
+      "type": "local",
+      "command": ["npx", "-y", "github:SkipXS/mini-sandbox"]
+    }
+  }
+}
+```
+
+Restart OpenCode after saving the config.
+
 ### From GitHub
 
 Use directly from the GitHub repo with `npx`:
