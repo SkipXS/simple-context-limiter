@@ -3,10 +3,17 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { MAX_BYTES } from "./src/constants.js";
+import { formatOutput } from "./src/output.js";
 
 const child = spawn(process.execPath, ["server.js"], {
   cwd: import.meta.dirname,
-  env: { ...process.env, MINI_SANDBOX_MAX_FETCH_BYTES: "1024", MINI_SANDBOX_MAX_READ_BYTES: "1024" },
+  env: {
+    ...process.env,
+    MINI_SANDBOX_ALLOW_NON_HTTP_FETCH: "1",
+    MINI_SANDBOX_MAX_FETCH_BYTES: "1024",
+    MINI_SANDBOX_MAX_READ_BYTES: "1024",
+  },
   stdio: ["pipe", "pipe", "pipe"],
 });
 
@@ -105,6 +112,11 @@ async function findRgForTest() {
 }
 
 try {
+  const longLine = formatOutput("x".repeat(MAX_BYTES + 8192), 60);
+  assert.equal(longLine.truncated, true);
+  assert.ok(Buffer.byteLength(longLine.text, "utf8") <= MAX_BYTES);
+  assert.doesNotMatch(longLine.text, /-\d+ lines omitted/);
+
   tempDir = await mkdtemp(join(tmpdir(), "mini-sandbox-test-"));
   const largeFile = join(tempDir, "large.txt");
   await writeFile(largeFile, Array.from({ length: 300 }, (_, i) => `file line ${i}`).join("\n"), "utf8");
@@ -207,6 +219,9 @@ try {
     assert.ok(searched.result, JSON.stringify(searched));
     assert.match(searched.result.content[0].text, /file line 29/);
     assert.equal(typeof searched.result._meta.rgPath, "string");
+    assert.equal(searched.result._meta.shownMatches, 5);
+    assert.equal(searched.result._meta.truncated, true);
+    assert.equal(searched.result._meta.totalMatchesKnown, false);
   }
 
   const html = `<html><body>${Array.from({ length: 300 }, (_, i) => `<p>line ${i}</p>`).join("")}</body></html>`;

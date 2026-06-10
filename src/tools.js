@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { createInterface } from "node:readline";
 import {
+  ALLOW_NON_HTTP_FETCH,
+  CACHE_MAX_ENTRIES,
   CACHE_DIR,
   CACHE_FILE,
   CACHE_TTL_MS,
@@ -14,18 +16,29 @@ import {
   RG_NAME,
 } from "./constants.js";
 import { formatOutput, normalizeLimit, normalizeMaxLines } from "./output.js";
-import { commandError, runCommand, runProcess } from "./process.js";
+import { commandError, runCommand, runProcessLines } from "./process.js";
 
 fs.mkdirSync(CACHE_DIR, { recursive: true });
 
 function loadCache() {
-  try { return JSON.parse(fs.readFileSync(CACHE_FILE, "utf8")); } catch {
+  try { return pruneCache(JSON.parse(fs.readFileSync(CACHE_FILE, "utf8"))); } catch {
     return {};
   }
 }
 
-function saveCache(cache) {
+function saveCache(nextCache) {
+  cache = pruneCache(nextCache);
   fs.writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2));
+}
+
+function pruneCache(cache) {
+  const now = Date.now();
+  return Object.fromEntries(
+    Object.entries(cache ?? {})
+      .filter(([, entry]) => entry && typeof entry.ts === "number" && now - entry.ts < CACHE_TTL_MS)
+      .sort((a, b) => b[1].ts - a[1].ts)
+      .slice(0, CACHE_MAX_ENTRIES),
+  );
 }
 
 let cache = loadCache();
@@ -253,24 +266,35 @@ async function searchTool(args) {
   if (include) rgArgs.push("--glob", include);
   rgArgs.push(pattern, searchPath);
 
-  const result = await runProcess(rg, rgArgs, { cwd: process.cwd(), timeout: 120_000 });
+  const result = await runProcessLines(rg, rgArgs, {
+    cwd: process.cwd(),
+    timeout: 120_000,
+    maxLines: limit + 1,
+    maxBytes: MAX_READ_BYTES,
+  });
   if (result.code === 1) {
     return {
       content: [{ type: "text", text: "(no matches)" }],
-      _meta: { rgPath: rg, totalMatches: 0, shownMatches: 0, truncated: false, durationMs: result.durationMs },
+      _meta: {
+        rgPath: rg,
+        totalMatches: 0,
+        totalMatchesKnown: true,
+        shownMatches: 0,
+        truncated: false,
+        durationMs: result.durationMs,
+      },
     };
   }
-  if (result.code !== 0) {
+  if (result.code !== 0 && !result.truncated && !result.outputTooLarge) {
     commandError(`rg ${rgArgs.join(" ")}`, result.code, result.signal, result.stdout, result.stderr, result.timedOut, result.outputTooLarge);
   }
 
-  const output = result.stdout.trimEnd();
-  const matches = output ? output.split("\n") : [];
+  const matches = result.lines;
   const shown = matches.slice(0, limit);
-  const matchLimited = matches.length > limit;
+  const matchLimited = result.truncated || result.outputTooLarge || matches.length > limit;
   const text = matchLimited
-    ? [...shown, `... ${matches.length - limit} matches omitted ...`].join("\n")
-    : output || "(no matches)";
+    ? [...shown, `... more matches omitted ...`].join("\n")
+    : matches.join("\n") || "(no matches)";
   const formatted = formatOutput(text, maxLines);
 
   return {
@@ -278,6 +302,7 @@ async function searchTool(args) {
     _meta: {
       rgPath: rg,
       totalMatches: matches.length,
+      totalMatchesKnown: !matchLimited,
       shownMatches: shown.length,
       totalLines: formatted.totalLines,
       totalBytes: formatted.totalBytes,
@@ -310,8 +335,14 @@ function htmlToText(html) {
 }
 
 async function fetchUrl(url, force) {
-  try { new URL(url); } catch {
+  let parsed;
+  try { parsed = new URL(url); } catch {
     const error = new Error("sandbox_fetch requires a valid URL");
+    error.code = -32602;
+    throw error;
+  }
+  if (!ALLOW_NON_HTTP_FETCH && parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    const error = new Error("sandbox_fetch only allows http and https URLs by default; set MINI_SANDBOX_ALLOW_NON_HTTP_FETCH=1 to allow other schemes");
     error.code = -32602;
     throw error;
   }

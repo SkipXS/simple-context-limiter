@@ -22,15 +22,41 @@ export function formatOutput(output, maxLines = MAX_LINES) {
     return { text: output || "(no output)", totalLines, totalBytes, truncated: false };
   }
 
+  if (totalLines <= limit) {
+    return { text: formatByteSummary(output, totalBytes), totalLines, totalBytes, truncated: true };
+  }
+
   const head = Math.floor(limit * 0.4);
   const tail = limit - head;
+  const omittedLines = Math.max(0, totalLines - head - tail);
   const summary = [
     `╔══ ${totalLines} lines · ${(totalBytes / 1024).toFixed(1)} KB · showing first ${head} + last ${tail} ══╗`,
     ...lines.slice(0, head),
-    `╟── … ${totalLines - head - tail} lines omitted … ──╢`,
+    `╟── … ${omittedLines} lines omitted … ──╢`,
     ...lines.slice(-tail),
     `╚${"═".repeat(58)}╝`,
   ].join("\n");
 
-  return { text: summary, totalLines, totalBytes, truncated: true };
+  return {
+    text: Buffer.byteLength(summary, "utf8") <= MAX_BYTES ? summary : formatByteSummary(output, totalBytes),
+    totalLines,
+    totalBytes,
+    truncated: true,
+  };
+}
+
+function formatByteSummary(output, totalBytes) {
+  const buffer = Buffer.from(output, "utf8");
+  const headBytes = Math.floor(MAX_BYTES * 0.4);
+  const tailBytes = Math.floor(MAX_BYTES * 0.4);
+  const tailStart = Math.max(headBytes, buffer.length - tailBytes);
+  const omittedBytes = Math.max(0, totalBytes - headBytes - tailBytes);
+
+  return [
+    `╔══ ${(totalBytes / 1024).toFixed(1)} KB · showing first ${(headBytes / 1024).toFixed(1)} KB + last ${(tailBytes / 1024).toFixed(1)} KB ══╗`,
+    buffer.subarray(0, headBytes).toString("utf8"),
+    `╟── … ${(omittedBytes / 1024).toFixed(1)} KB omitted … ──╢`,
+    buffer.subarray(tailStart).toString("utf8"),
+    `╚${"═".repeat(58)}╝`,
+  ].join("\n");
 }

@@ -67,13 +67,14 @@ If none is found, `sandbox_search` returns a clear error. The other tools do not
 
 ### `sandbox_fetch`
 
-Fetches a URL, strips HTML to readable text, caches the result for 1 hour, and truncates large output.
+Fetches an `http` or `https` URL, strips HTML to readable text, caches the result for 1 hour, and truncates large output.
 
 ```json
 { "url": "https://example.com/docs", "force": false, "maxLines": 100 }
 ```
 
 Downloads are capped at 10 MB by default before parsing/caching. Override with `MINI_SANDBOX_MAX_FETCH_BYTES` if needed.
+Non-HTTP schemes are blocked by default. Set `MINI_SANDBOX_ALLOW_NON_HTTP_FETCH=1` if you explicitly need schemes such as `data:` for local testing.
 
 ## How It Works
 
@@ -201,10 +202,12 @@ For Pi:
 | `MINI_SANDBOX_RG_PATH` | auto-detect | Explicit path to `rg` / `rg.exe` for `sandbox_search` |
 | `MINI_SANDBOX_MAX_FETCH_BYTES` | `10485760` | Max downloaded bytes before parsing/caching |
 | `MINI_SANDBOX_MAX_READ_BYTES` | `10485760` | Max file bytes read before previewing |
+| `MINI_SANDBOX_CACHE_MAX_ENTRIES` | `200` | Max cached fetch entries kept on disk |
+| `MINI_SANDBOX_ALLOW_NON_HTTP_FETCH` | unset | Set to `1` to allow non-HTTP fetch schemes |
 
 ## Cache
 
-`sandbox_fetch` caches fetched content for 1 hour in `~/.mini-sandbox/cache.json`. Delete that file anytime to clear the cache.
+`sandbox_fetch` caches fetched content for 1 hour in `~/.mini-sandbox/cache.json` and prunes old entries on load/save. Delete that file anytime to clear the cache.
 
 ## Why So Minimal?
 
