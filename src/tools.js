@@ -136,11 +136,15 @@ async function getStats() {
 }
 
 function addCounter(target, meta) {
+  const totalBytes = meta.totalBytes ?? 0;
+  const returnedBytes = Math.min(meta.returnedBytes ?? 0, totalBytes);
+  const savedBytes = Math.max(0, totalBytes - returnedBytes);
+
   target.calls++;
-  target.totalBytes += meta.totalBytes ?? 0;
-  target.returnedBytes += meta.returnedBytes ?? 0;
-  target.savedBytes += meta.savedBytes ?? 0;
-  target.estimatedTokensSaved += meta.estimatedTokensSaved ?? 0;
+  target.totalBytes += totalBytes;
+  target.returnedBytes += returnedBytes;
+  target.savedBytes += savedBytes;
+  target.estimatedTokensSaved += Math.ceil(savedBytes / 4);
 }
 
 async function recordStats(toolName, meta) {
@@ -162,6 +166,36 @@ function withSavedPercent(counter) {
     ...counter,
     savedPercent: counter.totalBytes > 0 ? Math.round((counter.savedBytes / counter.totalBytes) * 100) : 0,
   };
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat("en-US").format(value);
+}
+
+function formatStatsLine(label, stats) {
+  return `${label}: ${stats.calls} calls · saved ${formatBytes(stats.savedBytes)} (${stats.savedPercent}%) · returned ${formatBytes(stats.returnedBytes)} / ${formatBytes(stats.totalBytes)} · ~${formatNumber(stats.estimatedTokensSaved)} tokens`;
+}
+
+function formatStatsReport(stats) {
+  const lines = [
+    stats.project,
+    formatStatsLine("Total", stats),
+  ];
+  const tools = Object.entries(stats.byTool)
+    .sort((a, b) => b[1].savedBytes - a[1].savedBytes || b[1].calls - a[1].calls);
+
+  if (tools.length > 0) {
+    lines.push("", "By tool:");
+    for (const [toolName, toolStats] of tools) lines.push(formatStatsLine(toolName, toolStats));
+  }
+
+  return lines.join("\n");
 }
 
 function pathEntries() {
@@ -684,7 +718,7 @@ async function statsTool() {
   };
 
   return {
-    content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+    content: [{ type: "text", text: formatStatsReport(result) }],
     _meta: result,
   };
 }

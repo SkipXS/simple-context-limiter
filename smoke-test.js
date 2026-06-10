@@ -402,9 +402,10 @@ try {
   const statsRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
     const { callTool } = await import('./src/tools.js');
     await callTool('context_run', { command: ${JSON.stringify(`${shellQuote(process.execPath)} -e "console.log('x'.repeat(50000))"`)}, maxLines: 20 });
+    await callTool('context_run', { command: ${JSON.stringify(`${shellQuote(process.execPath)} -e "console.log('ok')"`)}, maxLines: 20 });
     await callTool('context_fetch', { url: 'data:text/plain,' + encodeURIComponent('x'.repeat(2048)), force: true, maxLines: 20 });
     const stats = await callTool('context_stats', {});
-    console.log(stats.content[0].text);
+    console.log(JSON.stringify({ text: stats.content[0].text, meta: stats._meta }));
   `], {
     cwd: import.meta.dirname,
     timeout: 5_000,
@@ -417,11 +418,18 @@ try {
     },
   });
   assert.equal(statsRun.code, 0, statsRun.stderr);
-  const parsedStats = JSON.parse(statsRun.stdout.trim());
+  const statsPayload = JSON.parse(statsRun.stdout.trim());
+  assert.match(statsPayload.text, /Total: 3 calls · saved /);
+  assert.match(statsPayload.text, /By tool:/);
+  assert.match(statsPayload.text, /context_run: 2 calls/);
+  assert.match(statsPayload.text, /context_fetch: 1 calls/);
+  const parsedStats = statsPayload.meta;
   assert.equal(parsedStats.project, import.meta.dirname);
-  assert.equal(parsedStats.calls, 2);
-  assert.equal(parsedStats.byTool.context_run.calls, 1);
+  assert.equal(parsedStats.calls, 3);
+  assert.equal(parsedStats.byTool.context_run.calls, 2);
   assert.equal(parsedStats.byTool.context_fetch.calls, 1);
+  assert.ok(parsedStats.returnedBytes <= parsedStats.totalBytes);
+  assert.ok(parsedStats.byTool.context_run.returnedBytes <= parsedStats.byTool.context_run.totalBytes);
   assert.ok(parsedStats.savedBytes > 0);
   assert.ok(parsedStats.estimatedTokensSaved > 0);
 
