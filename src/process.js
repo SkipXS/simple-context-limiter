@@ -74,7 +74,7 @@ export function errorData(error) {
   }
   if (error.cause) {
     data.cause = {};
-    for (const key of ["code", "errno", "address", "port"]) {
+    for (const key of ["code", "errno", "address", "port", "name", "message"]) {
       if (typeof error.cause[key] === "string" || typeof error.cause[key] === "number") {
         data.cause[key] = error.cause[key];
       }

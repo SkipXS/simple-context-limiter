@@ -15,7 +15,7 @@ import {
   MAX_READ_BYTES,
   RG_NAME,
 } from "./constants.js";
-import { decodeUtf8, formatOutput, normalizeLimit, normalizeMaxLines } from "./output.js";
+import { decodeUtf8, formatOutput } from "./output.js";
 import { commandError, runCommand, runProcessLines } from "./process.js";
 
 async function loadCache() {
@@ -84,16 +84,35 @@ async function findRg() {
   return null;
 }
 
+function invalidParams(message) {
+  const error = new Error(message);
+  error.code = -32602;
+  throw error;
+}
+
+function integerRange(min, max) {
+  return max === undefined ? `>= ${min}` : `between ${min} and ${max}`;
+}
+
+function validateInteger(value, name, min, max) {
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    invalidParams(`${name} must be an integer ${integerRange(min, max)}`);
+  }
+  if (value < min || (max !== undefined && value > max)) {
+    invalidParams(`${name} must be ${integerRange(min, max)}`);
+  }
+  return value;
+}
+
 async function runTool(args) {
   const { command, maxLines = MAX_LINES } = args ?? {};
   if (typeof command !== "string" || command.trim() === "") {
-    const error = new Error("sandbox_run requires a non-empty command string");
-    error.code = -32602;
-    throw error;
+    invalidParams("sandbox_run requires a non-empty command string");
   }
+  const lineLimit = validateInteger(maxLines, "sandbox_run maxLines", 10, 200);
 
   const { stdout, durationMs } = await runCommand(command);
-  const formatted = formatOutput(stdout, maxLines);
+  const formatted = formatOutput(stdout, lineLimit);
 
   return {
     content: [{ type: "text", text: formatted.text }],
@@ -110,10 +129,9 @@ async function runTool(args) {
 async function readTool(args) {
   const { path: filePath, maxLines = MAX_LINES, fromLine, toLine } = args ?? {};
   if (typeof filePath !== "string" || filePath.trim() === "") {
-    const error = new Error("sandbox_read requires a non-empty path string");
-    error.code = -32602;
-    throw error;
+    invalidParams("sandbox_read requires a non-empty path string");
   }
+  const lineLimit = validateInteger(maxLines, "sandbox_read maxLines", 10, 200);
 
   const resolved = path.resolve(filePath);
   const stat = await fs.promises.stat(resolved);
@@ -126,9 +144,9 @@ async function readTool(args) {
   const rangeMode = fromLine !== undefined || toLine !== undefined;
   const range = rangeMode ? normalizeLineRange(fromLine, toLine) : undefined;
   const { text, limited, rangeLimited, returnedLines, scannedLines } = rangeMode
-    ? await readLineRange(resolved, range.fromLine, range.toLine, maxLines)
+    ? await readLineRange(resolved, range.fromLine, range.toLine, lineLimit)
     : await readLimitedFile(resolved, stat.size, MAX_READ_BYTES);
-  const formatted = formatOutput(text, maxLines);
+  const formatted = formatOutput(text, lineLimit);
 
   return {
     content: [{ type: "text", text: formatted.text }],
@@ -149,30 +167,17 @@ async function readTool(args) {
 }
 
 function normalizeLineRange(fromLine, toLine) {
-  const from = fromLine === undefined ? 1 : Number(fromLine);
-  const to = toLine === undefined ? Infinity : Number(toLine);
+  const from = fromLine === undefined ? 1 : validateInteger(fromLine, "sandbox_read fromLine", 1);
+  const to = toLine === undefined ? Infinity : validateInteger(toLine, "sandbox_read toLine", 1);
 
-  if (!Number.isInteger(from) || from < 1) {
-    const error = new Error("sandbox_read fromLine must be an integer >= 1");
-    error.code = -32602;
-    throw error;
-  }
-  if (to !== Infinity && (!Number.isInteger(to) || to < 1)) {
-    const error = new Error("sandbox_read toLine must be an integer >= 1");
-    error.code = -32602;
-    throw error;
-  }
   if (to < from) {
-    const error = new Error("sandbox_read toLine must be greater than or equal to fromLine");
-    error.code = -32602;
-    throw error;
+    invalidParams("sandbox_read toLine must be greater than or equal to fromLine");
   }
 
   return { fromLine: from, toLine: to };
 }
 
 async function readLineRange(filePath, fromLine, toLine, maxLines) {
-  const limit = normalizeMaxLines(maxLines);
   const input = fs.createReadStream(filePath, { encoding: "utf8" });
   const lines = [];
   const file = createInterface({ input, crlfDelay: Infinity });
@@ -185,7 +190,7 @@ async function readLineRange(filePath, fromLine, toLine, maxLines) {
       if (lineNumber < fromLine) continue;
       if (lineNumber > toLine) break;
 
-      if (lines.length >= limit) {
+      if (lines.length >= maxLines) {
         rangeLimited = true;
         break;
       }
@@ -245,20 +250,16 @@ async function searchTool(args) {
   } = args ?? {};
 
   if (typeof pattern !== "string" || pattern.trim() === "") {
-    const error = new Error("sandbox_search requires a non-empty pattern string");
-    error.code = -32602;
-    throw error;
+    invalidParams("sandbox_search requires a non-empty pattern string");
   }
   if (typeof searchPath !== "string" || searchPath.trim() === "") {
-    const error = new Error("sandbox_search requires path to be a non-empty string when provided");
-    error.code = -32602;
-    throw error;
+    invalidParams("sandbox_search requires path to be a non-empty string when provided");
   }
   if (include !== undefined && typeof include !== "string") {
-    const error = new Error("sandbox_search include must be a string when provided");
-    error.code = -32602;
-    throw error;
+    invalidParams("sandbox_search include must be a string when provided");
   }
+  const limit = validateInteger(maxMatches, "sandbox_search maxMatches", 1, 1000);
+  const lineLimit = validateInteger(maxLines, "sandbox_search maxLines", 10, 200);
 
   const rg = await findRg();
   if (!rg) {
@@ -269,7 +270,6 @@ async function searchTool(args) {
     throw error;
   }
 
-  const limit = normalizeLimit(maxMatches, 100, 1, 1000);
   const rgArgs = ["--line-number", "--with-filename", "--color", "never", "--no-heading"];
   if (include) rgArgs.push("--glob", include);
   rgArgs.push("--", pattern, searchPath);
@@ -303,7 +303,7 @@ async function searchTool(args) {
   const text = matchLimited
     ? [...shown, `... more matches omitted ...`].join("\n")
     : matches.join("\n") || "(no matches)";
-  const formatted = formatOutput(text, maxLines);
+  const formatted = formatOutput(text, lineLimit);
 
   return {
     content: [{ type: "text", text: formatted.text }],
@@ -336,6 +336,7 @@ function htmlToText(html) {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, "\"")
     .replace(/&#39;/g, "'")
+    .replace(/&#(x[0-9a-f]+|\d+);/gi, decodeNumericHtmlEntity)
     .replace(/&nbsp;/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/ +/g, " ")
@@ -343,17 +344,24 @@ function htmlToText(html) {
     .trim();
 }
 
+function decodeNumericHtmlEntity(match, value) {
+  const codePoint = value.toLowerCase().startsWith("x")
+    ? Number.parseInt(value.slice(1), 16)
+    : Number.parseInt(value, 10);
+
+  if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return match;
+  if (codePoint >= 0xd800 && codePoint <= 0xdfff) return match;
+
+  return String.fromCodePoint(codePoint);
+}
+
 async function fetchUrl(url, force) {
   let parsed;
   try { parsed = new URL(url); } catch {
-    const error = new Error("sandbox_fetch requires a valid URL");
-    error.code = -32602;
-    throw error;
+    invalidParams("sandbox_fetch requires a valid URL");
   }
   if (!ALLOW_NON_HTTP_FETCH && parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    const error = new Error("sandbox_fetch only allows http and https URLs by default; set MINI_SANDBOX_ALLOW_NON_HTTP_FETCH=1 to allow other schemes");
-    error.code = -32602;
-    throw error;
+    invalidParams("sandbox_fetch only allows http and https URLs by default; set MINI_SANDBOX_ALLOW_NON_HTTP_FETCH=1 to allow other schemes");
   }
 
   const key = createHash("sha256").update(url).digest("hex");
@@ -363,10 +371,19 @@ async function fetchUrl(url, force) {
     return { content: cached.content, cached: true, limited: cached.limited ?? false };
   }
 
-  const res = await fetch(url, {
-    headers: { "User-Agent": "mini-sandbox/1.0" },
-    signal: AbortSignal.timeout(30_000),
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { "User-Agent": "mini-sandbox/1.0" },
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (cause) {
+    const error = new Error(`Fetch failed: ${url}`);
+    error.code = -32000;
+    error.url = url;
+    error.cause = cause;
+    throw error;
+  }
 
   if (!res.ok) {
     const error = new Error(`HTTP ${res.status} ${res.statusText}`);
@@ -420,13 +437,12 @@ async function readLimitedText(res, maxBytes) {
 async function fetchTool(args) {
   const { url, force = false, maxLines = MAX_LINES } = args ?? {};
   if (force !== undefined && typeof force !== "boolean") {
-    const error = new Error("sandbox_fetch force must be a boolean when provided");
-    error.code = -32602;
-    throw error;
+    invalidParams("sandbox_fetch force must be a boolean when provided");
   }
+  const lineLimit = validateInteger(maxLines, "sandbox_fetch maxLines", 10, 200);
 
   const data = await fetchUrl(url, force);
-  const formatted = formatOutput(data.content, maxLines);
+  const formatted = formatOutput(data.content, lineLimit);
 
   return {
     content: [{ type: "text", text: formatted.text }],

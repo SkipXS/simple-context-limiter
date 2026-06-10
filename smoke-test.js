@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { MAX_BYTES } from "./src/constants.js";
+import { MAX_BYTES, SERVER_VERSION } from "./src/constants.js";
 import { formatOutput } from "./src/output.js";
 import { errorData, runProcess, runProcessLines } from "./src/process.js";
 import { callTool } from "./src/tools.js";
@@ -141,6 +141,9 @@ try {
 
   const init = await request("initialize", {});
   assert.equal(init.result.serverInfo.name, "mini-sandbox");
+  const packageJson = JSON.parse(await readFile(join(import.meta.dirname, "package.json"), "utf8"));
+  assert.equal(SERVER_VERSION, packageJson.version);
+  assert.equal(init.result.serverInfo.version, packageJson.version);
 
   notification("notifications/initialized", {});
   notification("unknown/notification", {});
@@ -158,6 +161,13 @@ try {
   assert.equal(ok.result._meta.truncated, false);
   assert.equal(typeof ok.result._meta.durationMs, "number");
   assert.equal(typeof ok.result._meta.shell, "string");
+
+  const invalidRunMaxLines = await request("tools/call", {
+    name: "sandbox_run",
+    arguments: { command: "noop", maxLines: "20" },
+  });
+  assert.equal(invalidRunMaxLines.error.code, -32602);
+  assert.match(invalidRunMaxLines.error.message, /maxLines must be an integer/);
 
   if (configuredShell().includes("bash")) {
     const bashOnly = await request("tools/call", {
@@ -243,6 +253,20 @@ try {
   assert.equal(invalidRangeRead.error.code, -32602);
   assert.match(invalidRangeRead.error.message, /toLine must be greater/);
 
+  const invalidRangeTypeRead = await request("tools/call", {
+    name: "sandbox_read",
+    arguments: { path: largeFile, fromLine: "1" },
+  });
+  assert.equal(invalidRangeTypeRead.error.code, -32602);
+  assert.match(invalidRangeTypeRead.error.message, /fromLine must be an integer/);
+
+  const invalidReadMaxLines = await request("tools/call", {
+    name: "sandbox_read",
+    arguments: { path: largeFile, maxLines: 201 },
+  });
+  assert.equal(invalidReadMaxLines.error.code, -32602);
+  assert.match(invalidReadMaxLines.error.message, /maxLines must be between 10 and 200/);
+
   const rgPath = await findRgForTest();
   if (rgPath) {
     const searched = await request("tools/call", {
@@ -266,6 +290,13 @@ try {
     assert.match(dashPattern.result.content[0].text, /-needle/);
   }
 
+  const invalidSearchMaxMatches = await request("tools/call", {
+    name: "sandbox_search",
+    arguments: { pattern: "anything", maxMatches: 0 },
+  });
+  assert.equal(invalidSearchMaxMatches.error.code, -32602);
+  assert.match(invalidSearchMaxMatches.error.message, /maxMatches must be between 1 and 1000/);
+
   const html = `<html><body>${Array.from({ length: 300 }, (_, i) => `<p>line ${i}</p>`).join("")}</body></html>`;
   const fetched = await request("tools/call", {
     name: "sandbox_fetch",
@@ -276,12 +307,26 @@ try {
   assert.equal(fetched.result._meta.downloadLimited, true);
   assert.match(fetched.result.content[0].text, /lines omitted/);
 
+  const entityFetch = await request("tools/call", {
+    name: "sandbox_fetch",
+    arguments: { url: `data:text/html,${encodeURIComponent("<p>A&#8212;B &#x2014; C</p>")}`, force: true, maxLines: 20 },
+  });
+  assert.match(entityFetch.result.content[0].text, /A.B . C/s);
+  assert.doesNotMatch(entityFetch.result.content[0].text, /&#/);
+
   const invalidForce = await request("tools/call", {
     name: "sandbox_fetch",
     arguments: { url: "data:text/plain,ok", force: "false" },
   });
   assert.equal(invalidForce.error.code, -32602);
   assert.match(invalidForce.error.message, /force must be a boolean/);
+
+  const invalidFetchMaxLines = await request("tools/call", {
+    name: "sandbox_fetch",
+    arguments: { url: "data:text/plain,ok", maxLines: "20" },
+  });
+  assert.equal(invalidFetchMaxLines.error.code, -32602);
+  assert.match(invalidFetchMaxLines.error.message, /maxLines must be an integer/);
 
   const limitedFetch = await request("tools/call", {
     name: "sandbox_fetch",
@@ -318,6 +363,25 @@ try {
     assert.equal(data.httpStatus, 418);
     assert.equal(data.httpStatusText, "I'm a Teapot");
     assert.match(data.url, /127\.0\.0\.1/);
+  }
+
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => {
+      const error = new Error("network unavailable");
+      error.code = "ETEST";
+      throw error;
+    };
+    await callTool("sandbox_fetch", { url: "https://example.test/unavailable", force: true });
+    assert.fail("expected sandbox_fetch to include URL for network errors");
+  } catch (error) {
+    const data = errorData(error);
+    assert.equal(error.code, -32000);
+    assert.equal(data.url, "https://example.test/unavailable");
+    assert.equal(data.cause.code, "ETEST");
+    assert.equal(data.cause.message, "network unavailable");
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 
   console.log("smoke tests passed");

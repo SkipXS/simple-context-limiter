@@ -101,6 +101,16 @@ The server also injects MCP startup instructions telling the LLM to default to t
 
 Native shell, read, or fetch tools remain appropriate when complete output, exact stderr/exit behavior, interactivity, or unsupported behavior is specifically needed. If `_meta.truncated` is true, retry with a narrower query/range or higher `maxLines` before falling back to native tools.
 
+## Errors
+
+Tool calls use standard JSON-RPC error codes:
+
+- `-32601` for unknown tools or methods
+- `-32602` for invalid arguments, such as wrong types or out-of-range limits
+- `-32000` for runtime failures, such as command exits, missing `rg`, HTTP errors, or network failures
+
+When available, `error.data` includes diagnostic fields. Command failures can include `exitCode`, `signal`, `stdout`, and `stderr`. Fetch failures can include `httpStatus`, `httpStatusText`, `url`, and low-level `cause` details.
+
 ## Requirements
 
 - Node.js >= 22
