@@ -1,16 +1,16 @@
 {
-  "name": "mini-sandbox",
+  "name": "simple-context-limiter",
   "version": "1.0.0",
-  "description": "Minimal sandbox MCP server — keeps large command output out of LLM context",
+  "description": "Minimal MCP server that keeps large command, file, search, and web output out of LLM context",
   "type": "module",
   "main": "server.js",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SkipXS/mini-sandbox.git"
+    "url": "git+https://github.com/SkipXS/simple-context-limiter.git"
   },
-  "homepage": "https://github.com/SkipXS/mini-sandbox#readme",
+  "homepage": "https://github.com/SkipXS/simple-context-limiter#readme",
   "bugs": {
-    "url": "https://github.com/SkipXS/mini-sandbox/issues"
+    "url": "https://github.com/SkipXS/simple-context-limiter/issues"
   },
   "engines": {
     "node": ">=22"
@@ -25,6 +25,6 @@
   "scripts": {
     "test": "node smoke-test.js"
   },
-  "bin": { "mini-sandbox": "server.js" },
+  "bin": { "simple-context-limiter": "server.js" },
   "license": "MIT"
 }

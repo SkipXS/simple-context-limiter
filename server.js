@@ -27,11 +27,11 @@ function rpcCode(error) {
   return Number.isInteger(error.code) ? error.code : -32000;
 }
 
-const instructions = "Default to sandbox_run, sandbox_read, sandbox_search, and sandbox_fetch for exploratory commands, file previews, searches, logs, test/build output, and web pages. "
-  + "Use sandbox_run instead of bash/terminal for commands that may produce large output. "
-  + "Use sandbox_read instead of cat/type/Get-Content for local file previews. "
-  + "Use sandbox_search instead of raw rg/grep commands for bounded local search results. "
-  + "Use sandbox_fetch instead of web_fetch/webfetch for pages you do not need as raw HTML. "
+const instructions = "Default to context_run, context_read, context_search, and context_fetch for exploratory commands, file previews, searches, logs, test/build output, and web pages. "
+  + "Use context_run instead of bash/terminal for commands that may produce large output. "
+  + "Use context_read instead of cat/type/Get-Content for local file previews. "
+  + "Use context_search instead of raw rg/grep commands for bounded local search results. "
+  + "Use context_fetch instead of web_fetch/webfetch for pages you do not need as raw HTML. "
   + "Use native shell/read/fetch tools only when you specifically need complete output, exact stderr/exit behavior, interactivity, or unsupported behavior. "
   + "Read the _meta field after each call: if truncated is true, retry with a narrower query/range or higher maxLines before falling back to native tools.";
 

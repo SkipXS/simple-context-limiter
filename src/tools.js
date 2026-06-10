@@ -31,7 +31,7 @@ async function saveCache(nextCache) {
     await fs.promises.mkdir(CACHE_DIR, { recursive: true });
     await fs.promises.writeFile(CACHE_FILE, JSON.stringify(cache, null, 2));
   } catch {
-    // Cache failures should not make sandbox_fetch unusable.
+    // Cache failures should not make context_fetch unusable.
   }
 }
 
@@ -82,7 +82,7 @@ async function isExecutable(filePath) {
 async function findRg() {
   const candidates = [];
 
-  if (process.env.MINI_SANDBOX_RG_PATH) candidates.push(process.env.MINI_SANDBOX_RG_PATH);
+  if (process.env.SIMPLE_CONTEXT_LIMITER_RG_PATH) candidates.push(process.env.SIMPLE_CONTEXT_LIMITER_RG_PATH);
 
   for (const entry of pathEntries()) candidates.push(path.join(entry, RG_NAME));
 
@@ -142,9 +142,9 @@ function savingsForText(originalText, returnedText) {
 async function runTool(args) {
   const { command, maxLines = MAX_LINES } = args ?? {};
   if (typeof command !== "string" || command.trim() === "") {
-    invalidParams("sandbox_run requires a non-empty command string");
+    invalidParams("context_run requires a non-empty command string");
   }
-  const lineLimit = validateInteger(maxLines, "sandbox_run maxLines", 10, 200);
+  const lineLimit = validateInteger(maxLines, "context_run maxLines", 10, 200);
 
   const { stdout, durationMs } = await runCommand(command);
   const formatted = formatOutput(stdout, lineLimit);
@@ -165,9 +165,9 @@ async function runTool(args) {
 async function readTool(args) {
   const { path: filePath, maxLines = MAX_LINES, fromLine, toLine } = args ?? {};
   if (typeof filePath !== "string" || filePath.trim() === "") {
-    invalidParams("sandbox_read requires a non-empty path string");
+    invalidParams("context_read requires a non-empty path string");
   }
-  const lineLimit = validateInteger(maxLines, "sandbox_read maxLines", 10, 200);
+  const lineLimit = validateInteger(maxLines, "context_read maxLines", 10, 200);
 
   const resolved = path.resolve(filePath);
   const stat = await fs.promises.stat(resolved);
@@ -204,11 +204,11 @@ async function readTool(args) {
 }
 
 function normalizeLineRange(fromLine, toLine) {
-  const from = fromLine === undefined ? 1 : validateInteger(fromLine, "sandbox_read fromLine", 1);
-  const to = toLine === undefined ? Infinity : validateInteger(toLine, "sandbox_read toLine", 1);
+  const from = fromLine === undefined ? 1 : validateInteger(fromLine, "context_read fromLine", 1);
+  const to = toLine === undefined ? Infinity : validateInteger(toLine, "context_read toLine", 1);
 
   if (to < from) {
-    invalidParams("sandbox_read toLine must be greater than or equal to fromLine");
+    invalidParams("context_read toLine must be greater than or equal to fromLine");
   }
 
   return { fromLine: from, toLine: to };
@@ -343,21 +343,21 @@ async function searchTool(args) {
   } = args ?? {};
 
   if (typeof pattern !== "string" || pattern.trim() === "") {
-    invalidParams("sandbox_search requires a non-empty pattern string");
+    invalidParams("context_search requires a non-empty pattern string");
   }
   if (typeof searchPath !== "string" || searchPath.trim() === "") {
-    invalidParams("sandbox_search requires path to be a non-empty string when provided");
+    invalidParams("context_search requires path to be a non-empty string when provided");
   }
   if (include !== undefined && typeof include !== "string") {
-    invalidParams("sandbox_search include must be a string when provided");
+    invalidParams("context_search include must be a string when provided");
   }
-  const limit = validateInteger(maxMatches, "sandbox_search maxMatches", 1, 1000);
-  const lineLimit = validateInteger(maxLines, "sandbox_search maxLines", 10, 200);
+  const limit = validateInteger(maxMatches, "context_search maxMatches", 1, 1000);
+  const lineLimit = validateInteger(maxLines, "context_search maxLines", 10, 200);
 
   const rg = await findRg();
   if (!rg) {
     const error = new Error(
-      "ripgrep was not found. Install rg, set MINI_SANDBOX_RG_PATH, or run from OpenCode/Pi after their rg helper has been installed.",
+      "ripgrep was not found. Install rg, set SIMPLE_CONTEXT_LIMITER_RG_PATH, or run from OpenCode/Pi after their rg helper has been installed.",
     );
     error.code = -32000;
     throw error;
@@ -458,10 +458,10 @@ function decodeNumericHtmlEntity(match, value) {
 async function fetchUrl(url, force) {
   let parsed;
   try { parsed = new URL(url); } catch {
-    invalidParams("sandbox_fetch requires a valid URL");
+    invalidParams("context_fetch requires a valid URL");
   }
   if (!ALLOW_NON_HTTP_FETCH && parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    invalidParams("sandbox_fetch only allows http and https URLs by default; set MINI_SANDBOX_ALLOW_NON_HTTP_FETCH=1 to allow other schemes");
+    invalidParams("context_fetch only allows http and https URLs by default; set SIMPLE_CONTEXT_LIMITER_ALLOW_NON_HTTP_FETCH=1 to allow other schemes");
   }
 
   const key = createHash("sha256").update(url).digest("hex");
@@ -474,7 +474,7 @@ async function fetchUrl(url, force) {
   let res;
   try {
     res = await fetch(url, {
-      headers: { "User-Agent": "mini-sandbox/1.0" },
+      headers: { "User-Agent": "simple-context-limiter/1.0" },
       signal: AbortSignal.timeout(30_000),
     });
   } catch (cause) {
@@ -537,9 +537,9 @@ async function readLimitedText(res, maxBytes) {
 async function fetchTool(args) {
   const { url, force = false, maxLines = MAX_LINES } = args ?? {};
   if (force !== undefined && typeof force !== "boolean") {
-    invalidParams("sandbox_fetch force must be a boolean when provided");
+    invalidParams("context_fetch force must be a boolean when provided");
   }
-  const lineLimit = validateInteger(maxLines, "sandbox_fetch maxLines", 10, 200);
+  const lineLimit = validateInteger(maxLines, "context_fetch maxLines", 10, 200);
 
   const data = await fetchUrl(url, force);
   const formatted = formatOutput(data.content, lineLimit);
@@ -560,7 +560,7 @@ async function fetchTool(args) {
 export const tools = {
   tools: [
     {
-      name: "sandbox_run",
+      name: "context_run",
       description:
         "Run a shell command and return only stdout. Large output is automatically truncated to head+tail (default 60 lines). Use this instead of bash when you don't need every line of output.",
       inputSchema: {
@@ -578,7 +578,7 @@ export const tools = {
       },
     },
     {
-      name: "sandbox_read",
+      name: "context_read",
       description:
         "Read a local UTF-8 text file and return truncated head+tail output. Use this instead of cat/type/Get-Content when the full file is not needed.",
       inputSchema: {
@@ -606,7 +606,7 @@ export const tools = {
       },
     },
     {
-      name: "sandbox_search",
+      name: "context_search",
       description:
         "Search local files with ripgrep and return bounded filename:line:match output. Uses system rg, OpenCode's cached rg, or Pi's cached rg when available.",
       inputSchema: {
@@ -632,7 +632,7 @@ export const tools = {
       },
     },
     {
-      name: "sandbox_fetch",
+      name: "context_fetch",
       description:
         "Fetch a URL and return its content as plain text (HTML is stripped to readable text). Large output is automatically truncated to head+tail. Results are cached for 1 hour; use force=true to bypass.",
       inputSchema: {
@@ -654,10 +654,10 @@ export const tools = {
 };
 
 export async function callTool(name, args) {
-  if (name === "sandbox_run") return await runTool(args);
-  if (name === "sandbox_read") return await readTool(args);
-  if (name === "sandbox_search") return await searchTool(args);
-  if (name === "sandbox_fetch") return await fetchTool(args);
+  if (name === "context_run") return await runTool(args);
+  if (name === "context_read") return await readTool(args);
+  if (name === "context_search") return await searchTool(args);
+  if (name === "context_fetch") return await fetchTool(args);
 
   const error = new Error(`Unknown tool: ${name}`);
   error.code = -32601;
