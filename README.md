@@ -10,6 +10,7 @@ A minimal MCP server that keeps large command, file, search, and web output out 
 | `context_read` | Reading local UTF-8 text files safely | `cat huge.log`, `type huge.log`, `Get-Content huge.log` |
 | `context_search` | Searching local files with bounded ripgrep output | raw `rg` / `grep` commands |
 | `context_fetch` | Fetching web pages as readable text | `webfetch`, raw HTML downloads |
+| `context_stats` | Viewing current-project aggregate savings stats | manual accounting |
 
 ### `context_run`
 
@@ -77,6 +78,14 @@ Downloads are capped at 10 MB by default before parsing/caching. Override with `
 Non-HTTP schemes are blocked by default. Set `SIMPLE_CONTEXT_LIMITER_ALLOW_NON_HTTP_FETCH=1` if you explicitly need schemes such as `data:` for local testing.
 HTTP(S) fetches are not restricted to public internet hosts. `context_fetch` can access `localhost`, private network addresses, and other HTTP services reachable from the machine running the MCP server. Only enable simple-context-limiter for agents you trust with that local access.
 
+### `context_stats`
+
+Shows aggregate savings statistics for the current project, grouped by tool. The project key is the MCP server's `process.cwd()`.
+
+```json
+{}
+```
+
 ## How It Works
 
 When an LLM calls normal shell or web tools, the entire output can enter the model context: every log line, every HTML tag, every navigation bar. simple-context-limiter gives the model smaller MCP tools that return only useful previews by default.
@@ -93,7 +102,9 @@ Large output is returned as head + tail:
 
 The response always includes `_meta.truncated`. If it is `true`, the LLM can re-run with a higher `maxLines`, pre-filter the command, read a narrower `context_read` line range, or fall back to the native client tool when every line is genuinely needed.
 
-Each tool response includes a compact visible savings footer and also reports the same stats in `_meta`: `returnedBytes`, `savedBytes`, `savedPercent`, and `estimatedTokensSaved`. Token savings are approximate and use `savedBytes / 4` as a dependency-free estimate.
+Each tool response also reports compact savings stats in `_meta`: `returnedBytes`, `savedBytes`, `savedPercent`, and `estimatedTokensSaved`. Token savings are approximate and use `savedBytes / 4` as a dependency-free estimate.
+
+Aggregate stats are stored globally in `~/.simple-context-limiter/stats.json`. They contain only numeric counters grouped by project path and tool name, not commands, file paths, URLs, or content.
 
 The server also injects MCP startup instructions telling the LLM to default to these tools for exploratory commands, file previews, searches, logs, test/build output, and web pages:
 
@@ -101,6 +112,7 @@ The server also injects MCP startup instructions telling the LLM to default to t
 - `context_read` instead of `cat`, `type`, or `Get-Content` for file previews
 - `context_search` instead of raw `rg` or `grep` commands for bounded search results
 - `context_fetch` instead of raw web fetches for pages that are not needed as raw HTML
+- `context_stats` when you want to inspect accumulated current-project savings
 
 Native shell, read, or fetch tools remain appropriate when complete output, exact stderr/exit behavior, interactivity, or unsupported behavior is specifically needed. If `_meta.truncated` is true, retry with a narrower query/range or higher `maxLines` before falling back to native tools.
 

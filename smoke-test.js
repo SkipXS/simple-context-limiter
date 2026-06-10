@@ -102,10 +102,6 @@ function assertSavingsMeta(meta) {
   assert.ok(meta.estimatedTokensSaved >= 0);
 }
 
-function assertSavingsFooter(text) {
-  assert.match(text, /\[context saved: .*\([0-9]+%\) \| returned: .* \| est\. tokens saved: [0-9]+\]/);
-}
-
 async function pathExists(filePath) {
   try {
     await import("node:fs/promises").then((fs) => fs.stat(filePath));
@@ -168,14 +164,13 @@ try {
   assert.deepEqual(unexpectedResponses, []);
 
   const listed = await request("tools/list", {});
-  assert.deepEqual(listed.result.tools.map((tool) => tool.name), ["context_run", "context_read", "context_search", "context_fetch"]);
+  assert.deepEqual(listed.result.tools.map((tool) => tool.name), ["context_run", "context_read", "context_search", "context_fetch", "context_stats"]);
 
   const ok = await request("tools/call", {
     name: "context_run",
     arguments: { command: isPowerShellConfigured() ? "Write-Output ok" : `${shellQuote(process.execPath)} -e "console.log('ok')"` },
   });
   assert.ok(ok.result.content[0].text.startsWith("ok"));
-  assertSavingsFooter(ok.result.content[0].text);
   assert.equal(ok.result._meta.truncated, false);
   assertSavingsMeta(ok.result._meta);
   assert.equal(typeof ok.result._meta.durationMs, "number");
@@ -224,7 +219,7 @@ try {
     arguments: { command: isPowerShellConfigured() ? "Start-Sleep -Milliseconds 300; Write-Output slow" : `${shellQuote(process.execPath)} -e "setTimeout(() => console.log('slow'), 300)"` },
   });
   const listWhileRunning = await request("tools/list", {});
-  assert.equal(listWhileRunning.result.tools.length, 4);
+  assert.equal(listWhileRunning.result.tools.length, 5);
   const slowResult = await slow;
   assert.ok(slowResult.result.content[0].text.startsWith("slow"));
 
@@ -235,7 +230,6 @@ try {
   assert.equal(read.result._meta.truncated, true);
   assertSavingsMeta(read.result._meta);
   assert.ok(read.result._meta.savedBytes > 0);
-  assertSavingsFooter(read.result.content[0].text);
   assert.equal(read.result._meta.fileReadLimited, true);
   assert.match(read.result.content[0].text, /file line 0/);
   assert.match(read.result.content[0].text, /file line 299/);
@@ -309,7 +303,6 @@ try {
     assert.equal(searched.result._meta.shownMatches, 5);
     assert.equal(searched.result._meta.truncated, true);
     assertSavingsMeta(searched.result._meta);
-    assertSavingsFooter(searched.result.content[0].text);
     assert.equal(searched.result._meta.totalMatchesKnown, false);
     assert.equal(searched.result._meta.totalMatches, undefined);
     assert.equal(searched.result._meta.matchesRead, 6);
@@ -338,7 +331,6 @@ try {
   assert.equal(fetched.result._meta.truncated, true);
   assertSavingsMeta(fetched.result._meta);
   assert.ok(fetched.result._meta.savedBytes > 0);
-  assertSavingsFooter(fetched.result.content[0].text);
   assert.equal(fetched.result._meta.downloadLimited, true);
   assert.match(fetched.result.content[0].text, /lines omitted/);
 
@@ -406,6 +398,32 @@ try {
   });
   assert.equal(cachePrune.code, 0, cachePrune.stderr);
   assert.deepEqual(JSON.parse(cachePrune.stdout.trim()), { first: false, second: false, firstAgain: false });
+
+  const statsRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
+    const { callTool } = await import('./src/tools.js');
+    await callTool('context_run', { command: ${JSON.stringify(`${shellQuote(process.execPath)} -e "console.log('x'.repeat(50000))"`)}, maxLines: 20 });
+    await callTool('context_fetch', { url: 'data:text/plain,' + encodeURIComponent('x'.repeat(2048)), force: true, maxLines: 20 });
+    const stats = await callTool('context_stats', {});
+    console.log(stats.content[0].text);
+  `], {
+    cwd: import.meta.dirname,
+    timeout: 5_000,
+    env: {
+      ...process.env,
+      HOME: join(tempDir, "stats-home"),
+      USERPROFILE: join(tempDir, "stats-home"),
+      SIMPLE_CONTEXT_LIMITER_ALLOW_NON_HTTP_FETCH: "1",
+      SIMPLE_CONTEXT_LIMITER_MAX_FETCH_BYTES: "1024",
+    },
+  });
+  assert.equal(statsRun.code, 0, statsRun.stderr);
+  const parsedStats = JSON.parse(statsRun.stdout.trim());
+  assert.equal(parsedStats.project, import.meta.dirname);
+  assert.equal(parsedStats.calls, 2);
+  assert.equal(parsedStats.byTool.context_run.calls, 1);
+  assert.equal(parsedStats.byTool.context_fetch.calls, 1);
+  assert.ok(parsedStats.savedBytes > 0);
+  assert.ok(parsedStats.estimatedTokensSaved > 0);
 
   httpServer = createServer((req, res) => {
     res.writeHead(418, { "content-type": "text/plain" });

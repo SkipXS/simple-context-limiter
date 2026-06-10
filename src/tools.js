@@ -15,8 +15,9 @@ import {
   MAX_LINES,
   MAX_READ_BYTES,
   RG_NAME,
+  STATS_FILE,
 } from "./constants.js";
-import { addSavingsFooter, decodeUtf8, formatOutput } from "./output.js";
+import { decodeUtf8, formatOutput } from "./output.js";
 import { commandError, runCommand, runProcessLines } from "./process.js";
 
 async function loadCache() {
@@ -59,10 +60,108 @@ function pruneCache(cache) {
 }
 
 let cache;
+let stats;
 
 async function getCache() {
   if (cache === undefined) cache = await loadCache();
   return cache;
+}
+
+function emptyStats() {
+  return { version: 1, projects: {} };
+}
+
+function emptyCounter() {
+  return {
+    calls: 0,
+    totalBytes: 0,
+    returnedBytes: 0,
+    savedBytes: 0,
+    estimatedTokensSaved: 0,
+  };
+}
+
+function normalizeCounter(value) {
+  return {
+    ...emptyCounter(),
+    calls: Number.isFinite(value?.calls) ? value.calls : 0,
+    totalBytes: Number.isFinite(value?.totalBytes) ? value.totalBytes : 0,
+    returnedBytes: Number.isFinite(value?.returnedBytes) ? value.returnedBytes : 0,
+    savedBytes: Number.isFinite(value?.savedBytes) ? value.savedBytes : 0,
+    estimatedTokensSaved: Number.isFinite(value?.estimatedTokensSaved) ? value.estimatedTokensSaved : 0,
+  };
+}
+
+function normalizeStats(value) {
+  const nextStats = emptyStats();
+
+  for (const [project, projectStats] of Object.entries(value?.projects ?? {})) {
+    if (typeof project !== "string" || !project) continue;
+
+    const normalizedProject = {
+      ...normalizeCounter(projectStats),
+      byTool: {},
+    };
+
+    for (const [toolName, toolStats] of Object.entries(projectStats?.byTool ?? {})) {
+      if (typeof toolName !== "string" || !toolName) continue;
+      normalizedProject.byTool[toolName] = normalizeCounter(toolStats);
+    }
+
+    nextStats.projects[project] = normalizedProject;
+  }
+
+  return nextStats;
+}
+
+async function loadStats() {
+  try { return normalizeStats(JSON.parse(await fs.promises.readFile(STATS_FILE, "utf8"))); } catch {
+    return emptyStats();
+  }
+}
+
+async function saveStats(nextStats) {
+  stats = normalizeStats(nextStats);
+  try {
+    await fs.promises.mkdir(CACHE_DIR, { recursive: true });
+    await fs.promises.writeFile(STATS_FILE, JSON.stringify(stats, null, 2));
+  } catch {
+    // Stats failures should not make context tools unusable.
+  }
+}
+
+async function getStats() {
+  if (stats === undefined) stats = await loadStats();
+  return stats;
+}
+
+function addCounter(target, meta) {
+  target.calls++;
+  target.totalBytes += meta.totalBytes ?? 0;
+  target.returnedBytes += meta.returnedBytes ?? 0;
+  target.savedBytes += meta.savedBytes ?? 0;
+  target.estimatedTokensSaved += meta.estimatedTokensSaved ?? 0;
+}
+
+async function recordStats(toolName, meta) {
+  const currentStats = await getStats();
+  const project = process.cwd();
+  const projectStats = currentStats.projects[project] ?? { ...emptyCounter(), byTool: {} };
+  const toolStats = projectStats.byTool[toolName] ?? emptyCounter();
+
+  addCounter(projectStats, meta);
+  addCounter(toolStats, meta);
+
+  projectStats.byTool[toolName] = toolStats;
+  currentStats.projects[project] = projectStats;
+  await saveStats(currentStats);
+}
+
+function withSavedPercent(counter) {
+  return {
+    ...counter,
+    savedPercent: counter.totalBytes > 0 ? Math.round((counter.savedBytes / counter.totalBytes) * 100) : 0,
+  };
 }
 
 function pathEntries() {
@@ -129,15 +228,15 @@ function savingsMeta(formatted) {
 
 function savingsForText(originalText, returnedText) {
   const totalBytes = Buffer.byteLength(originalText, "utf8");
-  const savings = addSavingsFooter(returnedText, totalBytes);
+  const returnedBytes = Buffer.byteLength(returnedText, "utf8");
+  const savedBytes = Math.max(0, totalBytes - returnedBytes);
 
   return {
     totalBytes,
-    text: savings.text,
-    returnedBytes: savings.returnedBytes,
-    savedBytes: savings.savedBytes,
-    savedPercent: savings.savedPercent,
-    estimatedTokensSaved: savings.estimatedTokensSaved,
+    returnedBytes,
+    savedBytes,
+    savedPercent: totalBytes > 0 ? Math.round((savedBytes / totalBytes) * 100) : 0,
+    estimatedTokensSaved: Math.ceil(savedBytes / 4),
   };
 }
 
@@ -150,17 +249,19 @@ async function runTool(args) {
 
   const { stdout, durationMs } = await runCommand(command);
   const formatted = formatOutput(stdout, lineLimit);
+  const meta = {
+    totalLines: formatted.totalLines,
+    totalBytes: formatted.totalBytes,
+    ...savingsMeta(formatted),
+    truncated: formatted.truncated,
+    durationMs,
+    shell: COMMAND_SHELL_NAME,
+  };
+  await recordStats("context_run", meta);
 
   return {
     content: [{ type: "text", text: formatted.text }],
-    _meta: {
-      totalLines: formatted.totalLines,
-      totalBytes: formatted.totalBytes,
-      ...savingsMeta(formatted),
-      truncated: formatted.truncated,
-      durationMs,
-      shell: COMMAND_SHELL_NAME,
-    },
+    _meta: meta,
   };
 }
 
@@ -185,23 +286,25 @@ async function readTool(args) {
     ? await readLineRange(resolved, range.fromLine, range.toLine, lineLimit, MAX_READ_BYTES)
     : await readLimitedFile(resolved, stat.size, MAX_READ_BYTES);
   const formatted = formatOutput(text, lineLimit);
+  const meta = {
+    path: resolved,
+    sizeBytes: stat.size,
+    totalLines: formatted.totalLines,
+    totalBytes: formatted.totalBytes,
+    ...savingsMeta(formatted),
+    truncated: formatted.truncated || rangeLimited || limited,
+    fileReadLimited: limited,
+    fromLine: range?.fromLine,
+    toLine: range?.toLine === Infinity ? undefined : range?.toLine,
+    returnedLines,
+    scannedLines,
+    rangeLimited,
+  };
+  await recordStats("context_read", meta);
 
   return {
     content: [{ type: "text", text: formatted.text }],
-    _meta: {
-      path: resolved,
-      sizeBytes: stat.size,
-      totalLines: formatted.totalLines,
-      totalBytes: formatted.totalBytes,
-      ...savingsMeta(formatted),
-      truncated: formatted.truncated || rangeLimited || limited,
-      fileReadLimited: limited,
-      fromLine: range?.fromLine,
-      toLine: range?.toLine === Infinity ? undefined : range?.toLine,
-      returnedLines,
-      scannedLines,
-      rangeLimited,
-    },
+    _meta: meta,
   };
 }
 
@@ -376,22 +479,24 @@ async function searchTool(args) {
     maxBytes: MAX_READ_BYTES,
   });
   if (result.code === 1) {
-    const noMatches = addSavingsFooter("(no matches)", 0);
+    const meta = {
+      rgPath: rg,
+      totalMatches: 0,
+      totalMatchesKnown: true,
+      shownMatches: 0,
+      totalBytes: 0,
+      returnedBytes: Buffer.byteLength("(no matches)", "utf8"),
+      savedBytes: 0,
+      savedPercent: 0,
+      estimatedTokensSaved: 0,
+      truncated: false,
+      durationMs: result.durationMs,
+    };
+    await recordStats("context_search", meta);
+
     return {
-      content: [{ type: "text", text: noMatches.text }],
-      _meta: {
-        rgPath: rg,
-        totalMatches: 0,
-        totalMatchesKnown: true,
-        shownMatches: 0,
-        totalBytes: 0,
-        returnedBytes: noMatches.returnedBytes,
-        savedBytes: noMatches.savedBytes,
-        savedPercent: noMatches.savedPercent,
-        estimatedTokensSaved: noMatches.estimatedTokensSaved,
-        truncated: false,
-        durationMs: result.durationMs,
-      },
+      content: [{ type: "text", text: "(no matches)" }],
+      _meta: meta,
     };
   }
   if (result.code !== 0 && !result.truncated && !result.outputTooLarge) {
@@ -405,24 +510,25 @@ async function searchTool(args) {
   const text = matchLimited
     ? [...shown, `... more matches omitted ...`].join("\n")
     : originalText || "(no matches)";
-  const formatted = formatOutput(text, lineLimit, { includeSavingsFooter: !matchLimited });
+  const formatted = formatOutput(text, lineLimit);
   const searchSavings = matchLimited ? savingsForText(originalText, formatted.text) : savingsMeta(formatted);
-  const { text: responseText = formatted.text, ...searchSavingsMeta } = searchSavings;
+  const meta = {
+    rgPath: rg,
+    totalMatches: matchLimited ? undefined : matches.length,
+    totalMatchesKnown: !matchLimited,
+    matchesRead: matchLimited ? matches.length : undefined,
+    shownMatches: shown.length,
+    totalLines: formatted.totalLines,
+    totalBytes: searchSavings.totalBytes ?? formatted.totalBytes,
+    ...searchSavings,
+    truncated: matchLimited || formatted.truncated,
+    durationMs: result.durationMs,
+  };
+  await recordStats("context_search", meta);
 
   return {
-    content: [{ type: "text", text: responseText }],
-    _meta: {
-      rgPath: rg,
-      totalMatches: matchLimited ? undefined : matches.length,
-      totalMatchesKnown: !matchLimited,
-      matchesRead: matchLimited ? matches.length : undefined,
-      shownMatches: shown.length,
-      totalLines: formatted.totalLines,
-      totalBytes: searchSavingsMeta.totalBytes ?? formatted.totalBytes,
-      ...searchSavingsMeta,
-      truncated: matchLimited || formatted.truncated,
-      durationMs: result.durationMs,
-    },
+    content: [{ type: "text", text: formatted.text }],
+    _meta: meta,
   };
 }
 
@@ -548,17 +654,38 @@ async function fetchTool(args) {
 
   const data = await fetchUrl(url, force);
   const formatted = formatOutput(data.content, lineLimit);
+  const meta = {
+    totalLines: formatted.totalLines,
+    totalBytes: formatted.totalBytes,
+    ...savingsMeta(formatted),
+    truncated: formatted.truncated || data.limited,
+    cached: data.cached,
+    downloadLimited: data.limited,
+  };
+  await recordStats("context_fetch", meta);
 
   return {
     content: [{ type: "text", text: formatted.text }],
-    _meta: {
-      totalLines: formatted.totalLines,
-      totalBytes: formatted.totalBytes,
-      ...savingsMeta(formatted),
-      truncated: formatted.truncated || data.limited,
-      cached: data.cached,
-      downloadLimited: data.limited,
-    },
+    _meta: meta,
+  };
+}
+
+async function statsTool() {
+  const currentStats = await getStats();
+  const project = process.cwd();
+  const projectStats = currentStats.projects[project] ?? { ...emptyCounter(), byTool: {} };
+  const byTool = Object.fromEntries(
+    Object.entries(projectStats.byTool ?? {}).map(([toolName, toolStats]) => [toolName, withSavedPercent(normalizeCounter(toolStats))]),
+  );
+  const result = {
+    project,
+    ...withSavedPercent(normalizeCounter(projectStats)),
+    byTool,
+  };
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+    _meta: result,
   };
 }
 
@@ -655,6 +782,15 @@ export const tools = {
         required: ["url"],
       },
     },
+    {
+      name: "context_stats",
+      description:
+        "Show current-project aggregate savings statistics grouped by context tool. Stats are stored globally and keyed by the MCP server process.cwd().",
+      inputSchema: {
+        type: "object",
+        properties: {},
+      },
+    },
   ],
 };
 
@@ -663,6 +799,7 @@ export async function callTool(name, args) {
   if (name === "context_read") return await readTool(args);
   if (name === "context_search") return await searchTool(args);
   if (name === "context_fetch") return await fetchTool(args);
+  if (name === "context_stats") return await statsTool();
 
   const error = new Error(`Unknown tool: ${name}`);
   error.code = -32601;

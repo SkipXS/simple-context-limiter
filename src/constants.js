@@ -23,6 +23,7 @@ export const COMMAND_SHELL_NAME = typeof COMMAND_SHELL === "string"
 
 export const CACHE_DIR = path.join(os.homedir(), ".simple-context-limiter");
 export const CACHE_FILE = path.join(CACHE_DIR, "cache.json");
+export const STATS_FILE = path.join(CACHE_DIR, "stats.json");
 export const RG_NAME = process.platform === "win32" ? "rg.exe" : "rg";
 
 export function normalizeByteLimit(value, fallback) {

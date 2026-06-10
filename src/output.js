@@ -12,19 +12,18 @@ export function normalizeLimit(value, fallback, min, max) {
   return Math.max(min, Math.min(parsed, max));
 }
 
-export function formatOutput(output, maxLines = MAX_LINES, options = {}) {
+export function formatOutput(output, maxLines = MAX_LINES) {
   const limit = normalizeMaxLines(maxLines);
   const totalBytes = Buffer.byteLength(output, "utf8");
   const lines = output.split("\n");
   const totalLines = lines.length;
-  const includeSavingsFooter = options.includeSavingsFooter ?? true;
 
   if (totalLines <= limit && totalBytes <= MAX_BYTES) {
-    return withSavings(output || "(no output)", totalLines, totalBytes, false, includeSavingsFooter);
+    return withSavings(output || "(no output)", totalLines, totalBytes, false);
   }
 
   if (totalLines <= limit) {
-    return withSavings(formatByteSummary(output, totalBytes), totalLines, totalBytes, true, includeSavingsFooter);
+    return withSavings(formatByteSummary(output, totalBytes), totalLines, totalBytes, true);
   }
 
   const head = Math.floor(limit * 0.4);
@@ -39,14 +38,14 @@ export function formatOutput(output, maxLines = MAX_LINES, options = {}) {
   ].join("\n");
 
   const text = Buffer.byteLength(summary, "utf8") <= MAX_BYTES ? summary : formatByteSummary(output, totalBytes);
-  return withSavings(text, totalLines, totalBytes, true, includeSavingsFooter);
+  return withSavings(text, totalLines, totalBytes, true);
 }
 
-function withSavings(text, totalLines, totalBytes, truncated, includeSavingsFooter) {
-  const savings = includeSavingsFooter ? addSavingsFooter(text, totalBytes) : savingsForText(text, totalBytes);
+function withSavings(text, totalLines, totalBytes, truncated) {
+  const savings = savingsForText(text, totalBytes);
 
   return {
-    text: savings.text,
+    text,
     totalLines,
     totalBytes,
     returnedBytes: savings.returnedBytes,
@@ -55,21 +54,6 @@ function withSavings(text, totalLines, totalBytes, truncated, includeSavingsFoot
     estimatedTokensSaved: savings.estimatedTokensSaved,
     truncated,
   };
-}
-
-export function addSavingsFooter(text, totalBytes) {
-  let stats = savingsForText(text, totalBytes);
-  let nextText = text;
-
-  for (let attempt = 0; attempt < 5; attempt++) {
-    nextText = `${text}\n\n${formatSavingsFooter(stats)}`;
-    const nextStats = savingsForText(nextText, totalBytes);
-    if (sameSavings(stats, nextStats)) return { text: nextText, ...nextStats };
-    stats = nextStats;
-  }
-
-  nextText = `${text}\n\n${formatSavingsFooter(stats)}`;
-  return { text: nextText, ...savingsForText(nextText, totalBytes) };
 }
 
 function savingsForText(text, totalBytes) {
@@ -83,23 +67,6 @@ function savingsForText(text, totalBytes) {
     savedPercent: totalBytes > 0 ? Math.round((savedBytes / totalBytes) * 100) : 0,
     estimatedTokensSaved: Math.ceil(savedBytes / 4),
   };
-}
-
-function sameSavings(a, b) {
-  return a.returnedBytes === b.returnedBytes
-    && a.savedBytes === b.savedBytes
-    && a.savedPercent === b.savedPercent
-    && a.estimatedTokensSaved === b.estimatedTokensSaved;
-}
-
-function formatSavingsFooter(stats) {
-  return `[context saved: ${formatBytes(stats.savedBytes)} (${stats.savedPercent}%) | returned: ${formatBytes(stats.returnedBytes)} | est. tokens saved: ${stats.estimatedTokensSaved}]`;
-}
-
-function formatBytes(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 export function decodeUtf8(buffer, { trimStart = false, trimEnd = false } = {}) {
