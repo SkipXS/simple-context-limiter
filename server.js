@@ -27,11 +27,13 @@ function rpcCode(error) {
   return Number.isInteger(error.code) ? error.code : -32000;
 }
 
-const instructions = "Use sandbox_run instead of bash/terminal for any command whose full output you don't need. "
-  + "Use sandbox_read instead of cat/type/Get-Content for local files whose full content you don't need. "
-  + "Use sandbox_search instead of raw rg/grep commands when you need bounded local search results. "
-  + "Use sandbox_fetch instead of web_fetch/webfetch for any page you don't need raw HTML from. "
-  + "Read the _meta field after each call: if truncated is true, you can re-run with higher maxLines, pre-filter, or fall back to the native tool.";
+const instructions = "Default to sandbox_run, sandbox_read, sandbox_search, and sandbox_fetch for exploratory commands, file previews, searches, logs, test/build output, and web pages. "
+  + "Use sandbox_run instead of bash/terminal for commands that may produce large output. "
+  + "Use sandbox_read instead of cat/type/Get-Content for local file previews. "
+  + "Use sandbox_search instead of raw rg/grep commands for bounded local search results. "
+  + "Use sandbox_fetch instead of web_fetch/webfetch for pages you do not need as raw HTML. "
+  + "Use native shell/read/fetch tools only when you specifically need complete output, exact stderr/exit behavior, interactivity, or unsupported behavior. "
+  + "Read the _meta field after each call: if truncated is true, retry with a narrower query/range or higher maxLines before falling back to native tools.";
 
 const rl = createInterface({ input: process.stdin });
 

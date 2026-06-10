@@ -91,12 +91,14 @@ Large output is returned as head + tail:
 
 The response always includes `_meta.truncated`. If it is `true`, the LLM can re-run with a higher `maxLines`, pre-filter the command, read a narrower `sandbox_read` line range, or fall back to the native client tool when every line is genuinely needed.
 
-The server also injects MCP startup instructions telling the LLM when to prefer:
+The server also injects MCP startup instructions telling the LLM to default to these tools for exploratory commands, file previews, searches, logs, test/build output, and web pages:
 
-- `sandbox_run` instead of shell/terminal commands
-- `sandbox_read` instead of `cat`, `type`, or `Get-Content`
-- `sandbox_search` instead of raw `rg` or `grep` commands
-- `sandbox_fetch` instead of raw web fetches
+- `sandbox_run` instead of shell/terminal commands that may produce large output
+- `sandbox_read` instead of `cat`, `type`, or `Get-Content` for file previews
+- `sandbox_search` instead of raw `rg` or `grep` commands for bounded search results
+- `sandbox_fetch` instead of raw web fetches for pages that are not needed as raw HTML
+
+Native shell, read, or fetch tools remain appropriate when complete output, exact stderr/exit behavior, interactivity, or unsupported behavior is specifically needed. If `_meta.truncated` is true, retry with a narrower query/range or higher `maxLines` before falling back to native tools.
 
 ## Requirements
 
