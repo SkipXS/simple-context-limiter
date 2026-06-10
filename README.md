@@ -213,11 +213,12 @@ For Pi:
 | `MINI_SANDBOX_MAX_FETCH_BYTES` | `10485760` | Max downloaded bytes before parsing/caching |
 | `MINI_SANDBOX_MAX_READ_BYTES` | `10485760` | Max file bytes read before previewing |
 | `MINI_SANDBOX_CACHE_MAX_ENTRIES` | `200` | Max cached fetch entries kept on disk |
+| `MINI_SANDBOX_CACHE_MAX_BYTES` | `52428800` | Max cached fetch content bytes kept on disk |
 | `MINI_SANDBOX_ALLOW_NON_HTTP_FETCH` | unset | Set to `1` to allow non-HTTP fetch schemes |
 
 ## Cache
 
-`sandbox_fetch` caches fetched content for 1 hour in `~/.mini-sandbox/cache.json` and prunes old entries on load/save. Delete that file anytime to clear the cache.
+`sandbox_fetch` caches fetched content for 1 hour in `~/.mini-sandbox/cache.json` and prunes old entries on load/save. The cache is capped by entry count and total content bytes. Delete that file anytime to clear the cache.
 
 ## Why So Minimal?
 

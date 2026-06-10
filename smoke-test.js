@@ -134,9 +134,11 @@ try {
   tempDir = await mkdtemp(join(tmpdir(), "mini-sandbox-test-"));
   const largeFile = join(tempDir, "large.txt");
   const largeOneLineFile = join(tempDir, "large-one-line.txt");
+  const hugeRangeFile = join(tempDir, "huge-range.txt");
   const dashFile = join(tempDir, "dash.txt");
   await writeFile(largeFile, Array.from({ length: 300 }, (_, i) => `file line ${i}`).join("\n"), "utf8");
   await writeFile(largeOneLineFile, "🙂".repeat(2048), "utf8");
+  await writeFile(hugeRangeFile, `${"x".repeat(4096)}\nsmall\n`, "utf8");
   await writeFile(dashFile, "-needle\nplain\n", "utf8");
 
   const init = await request("initialize", {});
@@ -246,6 +248,14 @@ try {
   assert.equal(limitedRangeRead.result._meta.rangeLimited, true);
   assert.equal(limitedRangeRead.result._meta.returnedLines, 10);
 
+  const byteLimitedRangeRead = await request("tools/call", {
+    name: "sandbox_read",
+    arguments: { path: hugeRangeFile, fromLine: 1, toLine: 1, maxLines: 20 },
+  });
+  assert.equal(byteLimitedRangeRead.result._meta.truncated, true);
+  assert.equal(byteLimitedRangeRead.result._meta.fileReadLimited, true);
+  assert.equal(byteLimitedRangeRead.result._meta.returnedLines, 0);
+
   const invalidRangeRead = await request("tools/call", {
     name: "sandbox_read",
     arguments: { path: largeFile, fromLine: 5, toLine: 1 },
@@ -347,6 +357,29 @@ try {
     arguments: { url: cacheUrl },
   });
   assert.equal(cachedFetch.result._meta.cached, true);
+
+  const cachePrune = await runProcess(process.execPath, ["--input-type=module", "-e", `
+    const one = 'data:text/plain,' + encodeURIComponent('a'.repeat(700));
+    const two = 'data:text/plain,' + encodeURIComponent('b'.repeat(700));
+    const { callTool } = await import('./src/tools.js');
+    const first = await callTool('sandbox_fetch', { url: one, force: true });
+    const second = await callTool('sandbox_fetch', { url: two, force: true });
+    const firstAgain = await callTool('sandbox_fetch', { url: one });
+    console.log(JSON.stringify({ first: first._meta.cached, second: second._meta.cached, firstAgain: firstAgain._meta.cached }));
+  `], {
+    cwd: import.meta.dirname,
+    timeout: 5_000,
+    env: {
+      ...process.env,
+      HOME: join(tempDir, "cache-home"),
+      USERPROFILE: join(tempDir, "cache-home"),
+      MINI_SANDBOX_ALLOW_NON_HTTP_FETCH: "1",
+      MINI_SANDBOX_CACHE_MAX_BYTES: "1000",
+      MINI_SANDBOX_CACHE_MAX_ENTRIES: "10",
+    },
+  });
+  assert.equal(cachePrune.code, 0, cachePrune.stderr);
+  assert.deepEqual(JSON.parse(cachePrune.stdout.trim()), { first: false, second: false, firstAgain: false });
 
   httpServer = createServer((req, res) => {
     res.writeHead(418, { "content-type": "text/plain" });

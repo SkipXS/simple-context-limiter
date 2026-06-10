@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createInterface } from "node:readline";
+import { StringDecoder } from "node:string_decoder";
 import {
   ALLOW_NON_HTTP_FETCH,
+  CACHE_MAX_BYTES,
   CACHE_MAX_ENTRIES,
   CACHE_DIR,
   CACHE_FILE,
@@ -36,12 +37,25 @@ async function saveCache(nextCache) {
 
 function pruneCache(cache) {
   const now = Date.now();
-  return Object.fromEntries(
-    Object.entries(cache ?? {})
-      .filter(([, entry]) => entry && typeof entry.ts === "number" && now - entry.ts < CACHE_TTL_MS)
-      .sort((a, b) => b[1].ts - a[1].ts)
-      .slice(0, CACHE_MAX_ENTRIES),
-  );
+  const pruned = {};
+  let totalBytes = 0;
+  let entries = 0;
+
+  for (const [key, entry] of Object.entries(cache ?? {})
+    .filter(([, value]) => value && typeof value.ts === "number" && now - value.ts < CACHE_TTL_MS)
+    .sort((a, b) => b[1].ts - a[1].ts)) {
+    if (entries >= CACHE_MAX_ENTRIES) break;
+
+    const entryBytes = Buffer.byteLength(entry.content ?? "", "utf8");
+    if (entryBytes > CACHE_MAX_BYTES) continue;
+    if (totalBytes + entryBytes > CACHE_MAX_BYTES) continue;
+
+    pruned[key] = entry;
+    totalBytes += entryBytes;
+    entries++;
+  }
+
+  return pruned;
 }
 
 let cache;
@@ -144,7 +158,7 @@ async function readTool(args) {
   const rangeMode = fromLine !== undefined || toLine !== undefined;
   const range = rangeMode ? normalizeLineRange(fromLine, toLine) : undefined;
   const { text, limited, rangeLimited, returnedLines, scannedLines } = rangeMode
-    ? await readLineRange(resolved, range.fromLine, range.toLine, lineLimit)
+    ? await readLineRange(resolved, range.fromLine, range.toLine, lineLimit, MAX_READ_BYTES)
     : await readLimitedFile(resolved, stat.size, MAX_READ_BYTES);
   const formatted = formatOutput(text, lineLimit);
 
@@ -177,34 +191,90 @@ function normalizeLineRange(fromLine, toLine) {
   return { fromLine: from, toLine: to };
 }
 
-async function readLineRange(filePath, fromLine, toLine, maxLines) {
-  const input = fs.createReadStream(filePath, { encoding: "utf8" });
+async function readLineRange(filePath, fromLine, toLine, maxLines, maxBytes) {
+  const input = fs.createReadStream(filePath);
+  const decoder = new StringDecoder("utf8");
   const lines = [];
-  const file = createInterface({ input, crlfDelay: Infinity });
   let lineNumber = 0;
+  let bytes = 0;
+  let limited = false;
   let rangeLimited = false;
+  let currentLine = "";
+
+  function shouldCollectCurrentLine() {
+    const currentLineNumber = lineNumber + 1;
+    return currentLineNumber >= fromLine && currentLineNumber <= toLine;
+  }
+
+  function appendToCurrentLine(text) {
+    if (!shouldCollectCurrentLine()) return true;
+    if (lines.length >= maxLines) {
+      rangeLimited = true;
+      return false;
+    }
+
+    currentLine += text;
+    if (bytes + Buffer.byteLength(currentLine, "utf8") > maxBytes) {
+      limited = true;
+      return false;
+    }
+
+    return true;
+  }
+
+  function finishCurrentLine() {
+    const line = currentLine.endsWith("\r") ? currentLine.slice(0, -1) : currentLine;
+    currentLine = "";
+    lineNumber++;
+
+    if (lineNumber < fromLine) return true;
+    if (lineNumber > toLine) return false;
+
+    lines.push(line);
+    bytes += Buffer.byteLength(line, "utf8");
+
+    if (lines.length >= maxLines && lineNumber < toLine) {
+      rangeLimited = true;
+      return false;
+    }
+
+    return true;
+  }
+
+  function processText(text) {
+    let offset = 0;
+
+    while (offset < text.length) {
+      const newline = text.indexOf("\n", offset);
+      const part = newline === -1 ? text.slice(offset) : text.slice(offset, newline);
+      if (!appendToCurrentLine(part)) return false;
+      if (newline === -1) return true;
+      if (!finishCurrentLine()) return false;
+      offset = newline + 1;
+    }
+
+    return true;
+  }
 
   try {
-    for await (const line of file) {
-      lineNumber++;
-      if (lineNumber < fromLine) continue;
-      if (lineNumber > toLine) break;
-
-      if (lines.length >= maxLines) {
-        rangeLimited = true;
+    for await (const chunk of input) {
+      if (!processText(decoder.write(chunk))) {
+        input.destroy();
         break;
       }
+    }
 
-      lines.push(line);
+    if (!limited && !rangeLimited && lineNumber < toLine) {
+      processText(decoder.end());
+      if (currentLine) finishCurrentLine();
     }
   } finally {
-    file.close();
     input.destroy();
   }
 
   return {
     text: lines.join("\n"),
-    limited: false,
+    limited,
     rangeLimited,
     returnedLines: lines.length,
     scannedLines: lineNumber,

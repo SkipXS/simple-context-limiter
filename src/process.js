@@ -115,6 +115,7 @@ export async function runProcess(file, args, options = {}) {
     const started = Date.now();
     const child = spawn(file, args, {
       cwd: options.cwd,
+      env: options.env,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
