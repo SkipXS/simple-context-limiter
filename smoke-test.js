@@ -195,6 +195,7 @@ try {
     "context_run",
     "context_logs",
     "context_read",
+    "context_read_many",
     "context_search",
     "context_files",
     "context_tree",
@@ -434,12 +435,33 @@ try {
   assert.match(read.result.content[0].text, /file line 0/);
   assert.match(read.result.content[0].text, /file line 299/);
 
+  const readMany = await request("tools/call", {
+    name: "context_read_many",
+    arguments: { paths: [largeFile, dashFile], maxLinesPerFile: 20, maxTotalBytes: 4096 },
+  });
+  assert.equal(readMany.result._meta.filesRequested, 2);
+  assert.equal(readMany.result._meta.filesRead, 2);
+  assert.equal(readMany.result._meta.truncated, true);
+  assert.ok(readMany.result._meta.savedBytes > 0);
+  assert.equal(readMany.result._meta.files.length, 2);
+  assert.match(readMany.result.content[0].text, /large\.txt/);
+  assert.match(readMany.result.content[0].text, /dash\.txt/);
+  assert.match(readMany.result.content[0].text, /-needle/);
+
+  const invalidReadManyPaths = await request("tools/call", {
+    name: "context_read_many",
+    arguments: { paths: Array.from({ length: 21 }, (_, i) => `${i}.txt`) },
+  });
+  assert.equal(invalidReadManyPaths.error.code, -32602);
+  assert.match(invalidReadManyPaths.error.message, /at most 20/);
+
   const limitedRead = await request("tools/call", {
     name: "context_read",
     arguments: { path: largeOneLineFile, maxLines: 20 },
   });
   assert.equal(limitedRead.result._meta.fileReadLimited, true);
   assert.equal(limitedRead.result._meta.truncated, true);
+  assert.ok(limitedRead.result._meta.savedBytes > 0);
   assert.doesNotMatch(limitedRead.result.content[0].text, /�/);
 
   const byteLimitedRead = await request("tools/call", {
@@ -478,6 +500,7 @@ try {
   assert.equal(byteLimitedRangeRead.result._meta.truncated, true);
   assert.equal(byteLimitedRangeRead.result._meta.fileReadLimited, true);
   assert.equal(byteLimitedRangeRead.result._meta.returnedLines, 1);
+  assert.ok(byteLimitedRangeRead.result._meta.savedBytes > 0);
   assert.match(byteLimitedRangeRead.result.content[0].text, /^x+/);
 
   const invalidRangeRead = await request("tools/call", {

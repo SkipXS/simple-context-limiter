@@ -6,7 +6,7 @@ import { filesTool } from "./files.js";
 import { grepContextTool } from "./grep-context.js";
 import { logsTool } from "./logs.js";
 import { outlineTool } from "./outline.js";
-import { readTool } from "./read.js";
+import { readManyTool, readTool } from "./read.js";
 import { repoSummaryTool } from "./repo-summary.js";
 import { runTool } from "./run.js";
 import { searchTool } from "./search.js";
@@ -110,6 +110,42 @@ export const tools = {
           },
         },
         required: ["path"],
+      },
+    },
+    {
+      name: "context_read_many",
+      description:
+        "Read multiple local UTF-8 text files in one bounded response. Use this instead of several context_read calls when you need a small set of known files.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          paths: {
+            type: "array",
+            minItems: 1,
+            maxItems: 20,
+            items: { type: "string" },
+            description: "File paths to read. Maximum 20.",
+          },
+          maxLinesPerFile: {
+            type: "integer",
+            minimum: 10,
+            maximum: 200,
+            description: "Max lines per file before truncation. Default: 60.",
+          },
+          maxBytesPerFile: {
+            type: "integer",
+            minimum: 1024,
+            maximum: MAX_BYTES,
+            description: "Max bytes per file before truncation. Default: 32768.",
+          },
+          maxTotalBytes: {
+            type: "integer",
+            minimum: 1024,
+            maximum: MAX_BYTES,
+            description: "Max bytes for the combined response. Default: 32768.",
+          },
+        },
+        required: ["paths"],
       },
     },
     {
@@ -337,6 +373,7 @@ const handlers = {
   context_run: runTool,
   context_logs: logsTool,
   context_read: readTool,
+  context_read_many: readManyTool,
   context_search: searchTool,
   context_files: filesTool,
   context_tree: treeTool,

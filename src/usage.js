@@ -224,9 +224,11 @@ function summarizeArgs(args) {
   for (const [key, value] of Object.entries(args)) {
     if (key === "command") {
       summary.hasCommand = typeof value === "string" && value.length > 0;
+    } else if (key === "paths") {
+      summary[key] = Array.isArray(value) ? `array:${value.length}` : typeof value;
     } else if (["path", "url", "include", "pattern"].includes(key)) {
       summary[key] = typeof value;
-    } else if (["maxLines", "maxBytes", "maxMatches", "maxFiles", "maxHunks", "maxBlocks", "contextLines"].includes(key)) {
+    } else if (["maxLines", "maxBytes", "maxLinesPerFile", "maxBytesPerFile", "maxTotalBytes", "maxMatches", "maxFiles", "maxHunks", "maxBlocks", "contextLines"].includes(key)) {
       summary[key] = numberOrUndefined(value);
     } else if (typeof value === "boolean") {
       summary[key] = value;

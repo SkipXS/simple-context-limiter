@@ -4,15 +4,74 @@ import { StringDecoder } from "node:string_decoder";
 import { MAX_BYTES, MAX_LINES, MAX_READ_BYTES, READ_RANGE_TIMEOUT_MS } from "../constants.js";
 import { decodeUtf8, formatOutput } from "../output.js";
 import { recordStats } from "../stats.js";
-import { invalidParams, savingsMeta, validateInteger } from "./shared.js";
+import { invalidParams, validateInteger } from "./shared.js";
 
 export async function readTool(args) {
+  const result = await readFilePreview(args, "context_read");
+  await recordStats("context_read", result._meta);
+
+  return result;
+}
+
+export async function readManyTool(args) {
+  const { paths, maxLinesPerFile = MAX_LINES, maxBytesPerFile = MAX_BYTES, maxTotalBytes = MAX_BYTES } = args ?? {};
+  if (!Array.isArray(paths) || paths.length === 0) {
+    invalidParams("context_read_many requires a non-empty paths array");
+  }
+  if (paths.length > 20) {
+    invalidParams("context_read_many paths must contain at most 20 files");
+  }
+
+  const lineLimit = validateInteger(maxLinesPerFile, "context_read_many maxLinesPerFile", 10, 200);
+  const byteLimit = validateInteger(maxBytesPerFile, "context_read_many maxBytesPerFile", 1024, MAX_BYTES);
+  const totalLimit = validateInteger(maxTotalBytes, "context_read_many maxTotalBytes", 1024, MAX_BYTES);
+  const results = [];
+
+  for (const filePath of paths) {
+    if (typeof filePath !== "string" || filePath.trim() === "") {
+      invalidParams("context_read_many paths must contain non-empty strings");
+    }
+    results.push(await readFilePreview({ path: filePath, maxLines: lineLimit, maxBytes: byteLimit }, "context_read_many"));
+  }
+
+  const combined = results
+    .map((result) => `--- ${result._meta.path} ---\n${result.content[0].text}`)
+    .join("\n\n");
+  const formatted = formatOutput(combined, 200, totalLimit);
+  const totalBytes = results.reduce((sum, result) => sum + result._meta.totalBytes, 0);
+  const contextSavings = savingsForReturnedBytes(totalBytes, formatted.returnedBytes);
+  const meta = {
+    filesRequested: paths.length,
+    filesRead: results.length,
+    totalLines: formatted.totalLines,
+    totalBytes,
+    ...contextSavings,
+    truncated: formatted.truncated || results.some((result) => result._meta.truncated),
+    files: results.map((result) => ({
+      path: result._meta.path,
+      sizeBytes: result._meta.sizeBytes,
+      totalBytes: result._meta.totalBytes,
+      returnedBytes: result._meta.returnedBytes,
+      savedBytes: result._meta.savedBytes,
+      truncated: result._meta.truncated,
+      fileReadLimited: result._meta.fileReadLimited,
+    })),
+  };
+  await recordStats("context_read_many", meta);
+
+  return {
+    content: [{ type: "text", text: formatted.text }],
+    _meta: meta,
+  };
+}
+
+async function readFilePreview(args, toolName) {
   const { path: filePath, maxLines = MAX_LINES, maxBytes = MAX_BYTES, fromLine, toLine } = args ?? {};
   if (typeof filePath !== "string" || filePath.trim() === "") {
-    invalidParams("context_read requires a non-empty path string");
+    invalidParams(`${toolName} requires a non-empty path string`);
   }
-  const lineLimit = validateInteger(maxLines, "context_read maxLines", 10, 200);
-  const byteLimit = validateInteger(maxBytes, "context_read maxBytes", 1024, MAX_BYTES);
+  const lineLimit = validateInteger(maxLines, `${toolName} maxLines`, 10, 200);
+  const byteLimit = validateInteger(maxBytes, `${toolName} maxBytes`, 1024, MAX_BYTES);
 
   const resolved = path.resolve(filePath);
   const stat = await fs.promises.stat(resolved);
@@ -28,12 +87,13 @@ export async function readTool(args) {
     ? await readLineRange(resolved, range.fromLine, range.toLine, lineLimit, MAX_READ_BYTES, READ_RANGE_TIMEOUT_MS)
     : await readLimitedFile(resolved, stat.size, MAX_READ_BYTES);
   const formatted = formatOutput(text, lineLimit, byteLimit);
+  const contextSavings = savingsForReturnedBytes(stat.size, formatted.returnedBytes);
   const meta = {
     path: resolved,
     sizeBytes: stat.size,
     totalLines: formatted.totalLines,
-    totalBytes: formatted.totalBytes,
-    ...savingsMeta(formatted),
+    totalBytes: stat.size,
+    ...contextSavings,
     truncated: formatted.truncated || rangeLimited || limited || scanTimedOut,
     fileReadLimited: limited,
     fromLine: range?.fromLine,
@@ -44,11 +104,20 @@ export async function readTool(args) {
     rangeLimited,
     scanTimedOut,
   };
-  await recordStats("context_read", meta);
-
   return {
     content: [{ type: "text", text: formatted.text }],
     _meta: meta,
+  };
+}
+
+function savingsForReturnedBytes(totalBytes, returnedBytes) {
+  const savedBytes = Math.max(0, totalBytes - returnedBytes);
+
+  return {
+    returnedBytes,
+    savedBytes,
+    savedPercent: totalBytes > 0 ? Math.round((savedBytes / totalBytes) * 100) : 0,
+    estimatedTokensSaved: Math.ceil(savedBytes / 4),
   };
 }
 

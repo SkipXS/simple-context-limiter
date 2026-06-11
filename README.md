@@ -1,6 +1,6 @@
 # simple-context-limiter
 
-A minimal MCP server that keeps large command, log, file, search, repo-discovery, web, and git diff output out of your LLM context. Fifteen tools, zero dependencies, works in MCP-compatible clients such as Pi, OpenCode, Claude Code, and KiloCode.
+A minimal MCP server that keeps large command, log, file, search, repo-discovery, web, and git diff output out of your LLM context. Sixteen tools, zero dependencies, works in MCP-compatible clients such as Pi, OpenCode, Claude Code, and KiloCode.
 
 ## Tools
 
@@ -9,6 +9,7 @@ A minimal MCP server that keeps large command, log, file, search, repo-discovery
 | `context_run` | Running shell commands when full stdout is not needed | `bash`, terminal, `tail -10000 log.txt` |
 | `context_logs` | Extracting relevant errors from tests, builds, lints, and logs | raw test/build output, full server logs |
 | `context_read` | Reading local UTF-8 text files safely | `cat huge.log`, `type huge.log`, `Get-Content huge.log` |
+| `context_read_many` | Reading several known files in one bounded response | repeated `context_read` calls |
 | `context_search` | Searching local files with bounded ripgrep output | raw `rg` / `grep` commands |
 | `context_files` | Listing tracked project files compactly | broad recursive globs, `find .` |
 | `context_tree` | Viewing a bounded directory tree | full recursive tree output |
@@ -71,6 +72,16 @@ Read a specific 1-based line range after a search result:
 
 File reads are capped at 10 MB by default before formatting. Override with `SIMPLE_CONTEXT_LIMITER_MAX_READ_BYTES` if needed.
 When `fromLine` or `toLine` is used, the file is streamed line-by-line and `maxLines` still caps the returned range.
+
+### `context_read_many`
+
+Reads multiple local UTF-8 text files and returns one bounded response with a header before each file. Use it when discovery already identified a small set of files and several `context_read` calls would otherwise be needed.
+
+```json
+{ "paths": ["src/a.js", "src/b.js"], "maxLinesPerFile": 80, "maxBytesPerFile": 12000, "maxTotalBytes": 24000 }
+```
+
+The tool accepts at most 20 paths. Each file uses the same preview behavior as `context_read`, then the combined response is capped by `maxTotalBytes`.
 
 ### `context_search`
 
@@ -179,6 +190,7 @@ The server also injects MCP startup instructions telling the LLM to default to t
 - `context_run` instead of shell/terminal commands that may produce large output
 - `context_logs` instead of plain command output for tests, builds, lints, server logs, and other error-heavy output
 - `context_read` instead of `cat`, `type`, or `Get-Content` for file previews
+- `context_read_many` instead of several `context_read` calls for a small known file set
 - `context_search` instead of raw `rg` or `grep` commands for bounded search results
 - `context_files`, `context_tree`, `context_repo_summary`, and `context_file_outline` before broad file reads
 - `context_test_summary` instead of raw test/check output
@@ -311,7 +323,7 @@ For Pi:
 
 ## Security / Trust Model
 
-simple-context-limiter intentionally gives trusted agents local capabilities: `context_run` executes shell commands, `context_read` and `context_search` can access local paths visible to the MCP server process, and `context_fetch` can reach HTTP services available from that machine. Only enable it for clients and agents you trust with that access. Output, downloads, and previews are size-limited to protect model context, not to sandbox the underlying operation.
+simple-context-limiter intentionally gives trusted agents local capabilities: `context_run` executes shell commands, `context_read`, `context_read_many`, and `context_search` can access local paths visible to the MCP server process, and `context_fetch` can reach HTTP services available from that machine. Only enable it for clients and agents you trust with that access. Output, downloads, and previews are size-limited to protect model context, not to sandbox the underlying operation.
 
 ## Cache
 
