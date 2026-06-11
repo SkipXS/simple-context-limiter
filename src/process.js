@@ -84,7 +84,7 @@ export function errorData(error) {
   return Object.keys(data).length > 0 ? data : undefined;
 }
 
-function collectOutput(child, stdout, stderr) {
+function collectOutput(child, stdout, stderr, combined) {
   let outputBytes = 0;
   let outputTooLarge = false;
 
@@ -93,7 +93,11 @@ function collectOutput(child, stdout, stderr) {
 
     const remaining = MAX_COMMAND_BYTES - outputBytes;
     if (chunk.byteLength > remaining) {
-      if (remaining > 0) chunks.push(chunk.slice(0, remaining));
+      if (remaining > 0) {
+        const kept = chunk.slice(0, remaining);
+        chunks.push(kept);
+        combined?.push(kept);
+      }
       outputBytes = MAX_COMMAND_BYTES;
       outputTooLarge = true;
       terminateChild(child);
@@ -101,6 +105,7 @@ function collectOutput(child, stdout, stderr) {
     }
 
     chunks.push(chunk);
+    combined?.push(chunk);
     outputBytes += chunk.byteLength;
   }
 
@@ -163,8 +168,9 @@ export async function runCommandResult(command) {
 
     const stdout = [];
     const stderr = [];
+    const output = [];
     let timedOut = false;
-    const outputTooLarge = collectOutput(child, stdout, stderr);
+    const outputTooLarge = collectOutput(child, stdout, stderr, output);
 
     const timer = setTimeout(() => {
       timedOut = true;
@@ -177,11 +183,14 @@ export async function runCommandResult(command) {
     });
     child.on("close", (code, signal) => {
       clearTimeout(timer);
+      const stdoutText = Buffer.concat(stdout).toString("utf8");
+      const stderrText = Buffer.concat(stderr).toString("utf8");
       resolve({
         code,
         signal,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
+        stdout: stdoutText,
+        stderr: stderrText,
+        output: Buffer.concat(output).toString("utf8"),
         durationMs: Date.now() - started,
         timedOut,
         outputTooLarge: outputTooLarge(),

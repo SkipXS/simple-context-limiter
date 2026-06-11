@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import { CACHE_FILE, CACHE_MAX_BYTES, CACHE_MAX_ENTRIES, CACHE_TTL_MS } from "./constants.js";
-import { writeJsonAtomically } from "./storage.js";
+import { withFileLock, writeJsonAtomically } from "./storage.js";
 
 let cache;
 let cacheLoad;
@@ -24,15 +24,18 @@ async function getLoadedCache() {
 export async function updateCache(mutator) {
   let result;
   cacheWrite = cacheWrite.catch(() => {}).then(async () => {
-    const currentCache = await getLoadedCache();
-    result = await mutator(currentCache);
-    cache = pruneCache(result ?? currentCache);
-    const snapshot = cache;
-
     try {
-      await writeJsonAtomically(CACHE_FILE, snapshot);
+      await withFileLock(CACHE_FILE, async () => {
+        const currentCache = await loadCache();
+        result = await mutator(currentCache);
+        cache = pruneCache(result ?? currentCache);
+        await writeJsonAtomically(CACHE_FILE, cache);
+      });
     } catch {
       // Cache failures should not make context_fetch unusable.
+      const currentCache = await getLoadedCache();
+      result = await mutator(currentCache);
+      cache = pruneCache(result ?? currentCache);
     }
   });
   await cacheWrite;

@@ -257,6 +257,20 @@ try {
   assert.match(logsFallback.result.content[0].text, /plain 29/);
   assert.doesNotMatch(logsFallback.result.content[0].text, /plain 0/);
 
+  const jsErrorLogs = await request("tools/call", {
+    name: "context_logs",
+    arguments: {
+      command: isPowerShellConfigured()
+        ? `& ${shellQuote(process.execPath)} -e "console.log('before'); console.error('TypeError: bad input'); console.log('after'); process.exit(1)"`
+        : `${shellQuote(process.execPath)} -e "console.log('before'); console.error('TypeError: bad input'); console.log('after'); process.exit(1)"`,
+      contextLines: 1,
+      maxBytes: 4096,
+    },
+  });
+  assert.ok(jsErrorLogs.result, JSON.stringify(jsErrorLogs));
+  assert.equal(jsErrorLogs.result._meta.blocksFound, 1);
+  assert.match(jsErrorLogs.result.content[0].text, /TypeError: bad input/);
+
   const invalidLogsMaxBlocks = await request("tools/call", {
     name: "context_logs",
     arguments: { command: "noop", maxBlocks: 0 },
@@ -338,6 +352,8 @@ try {
   assert.equal(rangeRead.result._meta.fromLine, 291);
   assert.equal(rangeRead.result._meta.toLine, 295);
   assert.equal(rangeRead.result._meta.returnedLines, 5);
+  assert.equal(typeof rangeRead.result._meta.scannedBytes, "number");
+  assert.equal(rangeRead.result._meta.scanTimedOut, false);
   assert.match(rangeRead.result.content[0].text, /file line 290/);
   assert.match(rangeRead.result.content[0].text, /file line 294/);
   assert.doesNotMatch(rangeRead.result.content[0].text, /file line 289/);
@@ -566,8 +582,9 @@ try {
     const diffRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
       const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
       const diff = await callTool('context_diff', { maxFiles: 1, maxHunks: 1, maxBytes: 4096 });
+      const blankPathDiff = await callTool('context_diff', { path: '', maxBytes: 4096 });
       const noStagedDiff = await callTool('context_diff', { staged: true, maxBytes: 4096 });
-      console.log(JSON.stringify({ diff: { text: diff.content[0].text, meta: diff._meta }, noStagedDiff: { text: noStagedDiff.content[0].text, meta: noStagedDiff._meta } }));
+      console.log(JSON.stringify({ diff: { text: diff.content[0].text, meta: diff._meta }, blankPathDiff: { text: blankPathDiff.content[0].text, meta: blankPathDiff._meta }, noStagedDiff: { text: noStagedDiff.content[0].text, meta: noStagedDiff._meta } }));
     `], {
       cwd: gitDir,
       timeout: 5_000,
@@ -591,6 +608,8 @@ try {
     assert.equal(diffPayload.diff.meta.truncated, true);
     assert.ok(diffPayload.diff.meta.returnedBytes <= 4096);
     assertSavingsMeta(diffPayload.diff.meta);
+    assert.match(diffPayload.blankPathDiff.text, /Diff stat:/);
+    assert.equal(diffPayload.blankPathDiff.meta.filesChanged, 2);
     assert.equal(diffPayload.noStagedDiff.text, "(no diff)");
     assert.equal(diffPayload.noStagedDiff.meta.staged, true);
     assert.equal(diffPayload.noStagedDiff.meta.truncated, false);

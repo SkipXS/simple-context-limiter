@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { MAX_BYTES, MAX_LINES, MAX_READ_BYTES } from "../constants.js";
+import { MAX_BYTES, MAX_LINES, MAX_READ_BYTES, READ_RANGE_TIMEOUT_MS } from "../constants.js";
 import { decodeUtf8, formatOutput } from "../output.js";
 import { recordStats } from "../stats.js";
 import { invalidParams, savingsMeta, validateInteger } from "./shared.js";
@@ -24,8 +24,8 @@ export async function readTool(args) {
 
   const rangeMode = fromLine !== undefined || toLine !== undefined;
   const range = rangeMode ? normalizeLineRange(fromLine, toLine) : undefined;
-  const { text, limited, rangeLimited, returnedLines, scannedLines } = rangeMode
-    ? await readLineRange(resolved, range.fromLine, range.toLine, lineLimit, MAX_READ_BYTES)
+  const { text, limited, rangeLimited, returnedLines, scannedLines, scannedBytes, scanTimedOut } = rangeMode
+    ? await readLineRange(resolved, range.fromLine, range.toLine, lineLimit, MAX_READ_BYTES, READ_RANGE_TIMEOUT_MS)
     : await readLimitedFile(resolved, stat.size, MAX_READ_BYTES);
   const formatted = formatOutput(text, lineLimit, byteLimit);
   const meta = {
@@ -34,13 +34,15 @@ export async function readTool(args) {
     totalLines: formatted.totalLines,
     totalBytes: formatted.totalBytes,
     ...savingsMeta(formatted),
-    truncated: formatted.truncated || rangeLimited || limited,
+    truncated: formatted.truncated || rangeLimited || limited || scanTimedOut,
     fileReadLimited: limited,
     fromLine: range?.fromLine,
     toLine: range?.toLine === Infinity ? undefined : range?.toLine,
     returnedLines,
     scannedLines,
+    scannedBytes,
     rangeLimited,
+    scanTimedOut,
   };
   await recordStats("context_read", meta);
 
@@ -61,15 +63,22 @@ function normalizeLineRange(fromLine, toLine) {
   return { fromLine: from, toLine: to };
 }
 
-async function readLineRange(filePath, fromLine, toLine, maxLines, maxBytes) {
+async function readLineRange(filePath, fromLine, toLine, maxLines, maxBytes, timeoutMs) {
   const input = fs.createReadStream(filePath);
   const decoder = new StringDecoder("utf8");
   const lines = [];
   let lineNumber = 0;
   let bytes = 0;
+  let scannedBytes = 0;
   let limited = false;
   let rangeLimited = false;
+  let scanTimedOut = false;
   let currentLine = "";
+  const timer = setTimeout(() => {
+    scanTimedOut = true;
+    input.destroy(new Error("context_read range scan timed out"));
+  }, timeoutMs);
+  timer.unref();
 
   function shouldCollectCurrentLine() {
     const currentLineNumber = lineNumber + 1;
@@ -128,17 +137,21 @@ async function readLineRange(filePath, fromLine, toLine, maxLines, maxBytes) {
 
   try {
     for await (const chunk of input) {
+      scannedBytes += chunk.byteLength;
       if (!processText(decoder.write(chunk))) {
         input.destroy();
         break;
       }
     }
 
-    if (!limited && !rangeLimited && lineNumber < toLine) {
+    if (!limited && !rangeLimited && !scanTimedOut && lineNumber < toLine) {
       processText(decoder.end());
       if (currentLine) finishCurrentLine();
     }
+  } catch (error) {
+    if (!scanTimedOut) throw error;
   } finally {
+    clearTimeout(timer);
     input.destroy();
   }
 
@@ -148,6 +161,8 @@ async function readLineRange(filePath, fromLine, toLine, maxLines, maxBytes) {
     rangeLimited,
     returnedLines: lines.length,
     scannedLines: lineNumber,
+    scannedBytes,
+    scanTimedOut,
   };
 }
 

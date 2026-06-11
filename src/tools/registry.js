@@ -167,7 +167,7 @@ export const tools = {
       inputSchema: {
         type: "object",
         properties: {
-          path: { type: "string", description: "Optional non-empty file or directory pathspec to diff." },
+          path: { type: "string", description: "Optional file or directory pathspec to diff. Blank values are treated as omitted." },
           staged: { type: "boolean", description: "Show staged changes with git diff --cached. Default: false." },
           stat: { type: "boolean", description: "Include git diff --stat before hunks. Default: true." },
           maxFiles: {

@@ -10,6 +10,7 @@ export const MAX_BYTES = 32 * 1024;
 export const MAX_COMMAND_BYTES = normalizeByteLimit(process.env.SIMPLE_CONTEXT_LIMITER_MAX_COMMAND_BYTES, 10 * 1024 * 1024);
 export const MAX_FETCH_BYTES = normalizeByteLimit(process.env.SIMPLE_CONTEXT_LIMITER_MAX_FETCH_BYTES, 10 * 1024 * 1024);
 export const MAX_READ_BYTES = normalizeByteLimit(process.env.SIMPLE_CONTEXT_LIMITER_MAX_READ_BYTES, 10 * 1024 * 1024);
+export const READ_RANGE_TIMEOUT_MS = normalizeIntegerLimit(process.env.SIMPLE_CONTEXT_LIMITER_READ_RANGE_TIMEOUT_MS, 120_000, 1_000, 3_600_000);
 export const CACHE_MAX_ENTRIES = normalizeIntegerLimit(process.env.SIMPLE_CONTEXT_LIMITER_CACHE_MAX_ENTRIES, 200, 1, 10_000);
 export const CACHE_MAX_BYTES = normalizeByteLimit(process.env.SIMPLE_CONTEXT_LIMITER_CACHE_MAX_BYTES, 50 * 1024 * 1024);
 export const CACHE_TTL_MS = 3_600_000;

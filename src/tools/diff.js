@@ -15,8 +15,10 @@ export async function diffTool(args) {
     maxBytes = MAX_BYTES,
   } = args ?? {};
 
-  if (diffPath !== undefined && (typeof diffPath !== "string" || diffPath.trim() === "")) {
-    invalidParams("context_diff path must be a non-empty string when provided");
+  let normalizedDiffPath = diffPath;
+  if (diffPath !== undefined) {
+    if (typeof diffPath !== "string") invalidParams("context_diff path must be a string when provided");
+    if (diffPath.trim() === "") normalizedDiffPath = undefined;
   }
   if (typeof staged !== "boolean") {
     invalidParams("context_diff staged must be a boolean when provided");
@@ -31,8 +33,8 @@ export async function diffTool(args) {
   const byteLimit = validateInteger(maxBytes, "context_diff maxBytes", 1024, MAX_BYTES);
 
   const started = Date.now();
-  const diffArgs = gitDiffArgs(staged, [], diffPath);
-  const statPromise = stat ? runGit(gitDiffArgs(staged, ["--stat"], diffPath)) : undefined;
+  const diffArgs = gitDiffArgs(staged, [], normalizedDiffPath);
+  const statPromise = stat ? runGit(gitDiffArgs(staged, ["--stat"], normalizedDiffPath)) : undefined;
   const diffPromise = runGit(diffArgs);
   const [statResult, diffResult] = await Promise.all([statPromise, diffPromise]);
   const durationMs = Date.now() - started;

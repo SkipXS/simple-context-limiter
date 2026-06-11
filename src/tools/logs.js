@@ -23,7 +23,7 @@ export async function logsTool(args) {
   const byteLimit = validateInteger(maxBytes, "context_logs maxBytes", 1024, MAX_BYTES);
 
   const result = await runCommandResult(command);
-  const outputText = combinedCommandOutput(result.stdout, result.stderr);
+  const outputText = combinedCommandOutput(result);
   const extraction = extractLogBlocks(outputText, blockLimit, contextLimit, lineLimit);
   const statusLine = commandStatusLine(result);
   const originalText = [statusLine, outputText || "(no output)"].join("\n");
@@ -62,8 +62,11 @@ function commandStatusLine(result) {
   return `Command ${status} in ${result.durationMs}ms`;
 }
 
-function combinedCommandOutput(stdout, stderr) {
+function combinedCommandOutput(result) {
+  if (typeof result.output === "string") return result.output.trimEnd();
+
   const parts = [];
+  const { stdout, stderr } = result;
   if (stdout) parts.push(stdout.trimEnd());
   if (stderr) {
     if (parts.length > 0) parts.push("", "stderr:");
@@ -123,6 +126,7 @@ function extractLogBlocks(text, maxBlocks, contextLines, maxLines) {
 function isInterestingLogLine(line) {
   return /\b(error|failed|failure|exception|assertion|fatal|panic|traceback|warning|warn)\b/i.test(line)
     || /\b(ERR!|ERROR|FAIL|FAILED|FATAL|WARN)\b/.test(line)
+    || /\b[A-Z][A-Za-z0-9_]*(?:Error|Exception):/.test(line)
     || /\bTS\d{4}:/.test(line)
     || /^\s*at\s+.+:\d+:\d+\)?$/.test(line)
     || /^\s*\^+$/.test(line);

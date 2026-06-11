@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import { STATS_FILE } from "./constants.js";
-import { writeJsonAtomically } from "./storage.js";
+import { withFileLock, writeJsonAtomically } from "./storage.js";
 
 let stats;
 let statsUpdate = Promise.resolve();
@@ -87,17 +87,23 @@ function addCounter(target, meta) {
 
 export async function recordStats(toolName, meta) {
   statsUpdate = statsUpdate.catch(() => {}).then(async () => {
-    const currentStats = await getStats();
-    const project = process.cwd();
-    const projectStats = currentStats.projects[project] ?? { ...emptyCounter(), byTool: {} };
-    const toolStats = projectStats.byTool[toolName] ?? emptyCounter();
+    try {
+      await withFileLock(STATS_FILE, async () => {
+        const currentStats = await loadStats();
+        const project = process.cwd();
+        const projectStats = currentStats.projects[project] ?? { ...emptyCounter(), byTool: {} };
+        const toolStats = projectStats.byTool[toolName] ?? emptyCounter();
 
-    addCounter(projectStats, meta);
-    addCounter(toolStats, meta);
+        addCounter(projectStats, meta);
+        addCounter(toolStats, meta);
 
-    projectStats.byTool[toolName] = toolStats;
-    currentStats.projects[project] = projectStats;
-    await saveStats(currentStats);
+        projectStats.byTool[toolName] = toolStats;
+        currentStats.projects[project] = projectStats;
+        await saveStats(currentStats);
+      });
+    } catch {
+      // Stats failures should not make context tools unusable.
+    }
   });
   await statsUpdate;
 }
