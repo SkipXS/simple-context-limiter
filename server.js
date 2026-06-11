@@ -27,13 +27,15 @@ function rpcCode(error) {
   return Number.isInteger(error.code) ? error.code : -32000;
 }
 
-const instructions = "Default to context_run, context_read, context_search, and context_fetch for exploratory commands, file previews, searches, logs, test/build output, and web pages. "
+const instructions = "Default to context_run, context_logs, context_read, context_search, context_fetch, and context_diff for exploratory commands, logs, test/build output, file previews, searches, web pages, and git diff previews. "
   + "Use context_run instead of bash/terminal for commands that may produce large output. "
+  + "Use context_logs instead of context_run for tests, builds, lints, server logs, and other output where errors may appear in the middle. "
   + "Use context_read instead of cat/type/Get-Content for local file previews. "
   + "Use context_search instead of raw rg/grep commands for bounded local search results. "
   + "Use context_fetch instead of web_fetch/webfetch for pages you do not need as raw HTML. "
-  + "Use native shell/read/fetch tools only when you specifically need complete output, exact stderr/exit behavior, interactivity, or unsupported behavior. "
-  + "Read the _meta field after each call: if truncated is true, retry with a narrower query/range or higher maxLines before falling back to native tools.";
+  + "Use context_diff instead of raw git diff when reviewing working tree or staged changes. "
+  + "Use native shell/read/fetch/diff tools only when you specifically need complete output, exact stderr/exit behavior, interactivity, or unsupported behavior. "
+  + "Read the _meta field after each call: if truncated is true, retry with a narrower query/range or higher maxLines/maxBytes before falling back to native tools.";
 
 const rl = createInterface({ input: process.stdin });
 

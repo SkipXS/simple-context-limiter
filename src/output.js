@@ -6,24 +6,29 @@ export function normalizeMaxLines(maxLines = MAX_LINES) {
   return Math.max(10, Math.min(value, 200));
 }
 
+export function normalizeMaxBytes(maxBytes = MAX_BYTES) {
+  return normalizeLimit(maxBytes, MAX_BYTES, 1024, MAX_BYTES);
+}
+
 export function normalizeLimit(value, fallback, min, max) {
   const numeric = Number(value);
   const parsed = Number.isFinite(numeric) ? Math.trunc(numeric) : fallback;
   return Math.max(min, Math.min(parsed, max));
 }
 
-export function formatOutput(output, maxLines = MAX_LINES) {
+export function formatOutput(output, maxLines = MAX_LINES, maxBytes = MAX_BYTES) {
   const limit = normalizeMaxLines(maxLines);
+  const byteLimit = normalizeMaxBytes(maxBytes);
   const totalBytes = Buffer.byteLength(output, "utf8");
   const lines = output.split("\n");
   const totalLines = lines.length;
 
-  if (totalLines <= limit && totalBytes <= MAX_BYTES) {
+  if (totalLines <= limit && totalBytes <= byteLimit) {
     return withSavings(output || "(no output)", totalLines, totalBytes, false);
   }
 
   if (totalLines <= limit) {
-    return withSavings(formatByteSummary(output, totalBytes), totalLines, totalBytes, true);
+    return withSavings(formatByteSummary(output, totalBytes, byteLimit), totalLines, totalBytes, true);
   }
 
   const head = Math.floor(limit * 0.4);
@@ -37,7 +42,7 @@ export function formatOutput(output, maxLines = MAX_LINES) {
     `╚${"═".repeat(58)}╝`,
   ].join("\n");
 
-  const text = Buffer.byteLength(summary, "utf8") <= MAX_BYTES ? summary : formatByteSummary(output, totalBytes);
+  const text = Buffer.byteLength(summary, "utf8") <= byteLimit ? summary : formatByteSummary(output, totalBytes, byteLimit);
   return withSavings(text, totalLines, totalBytes, true);
 }
 
@@ -90,10 +95,29 @@ export function decodeUtf8(buffer, { trimStart = false, trimEnd = false } = {}) 
   return buffer.subarray(start, end).toString("utf8");
 }
 
-function formatByteSummary(output, totalBytes) {
+function formatByteSummary(output, totalBytes, maxBytes) {
   const buffer = Buffer.from(output, "utf8");
-  const headBytes = Math.floor(MAX_BYTES * 0.4);
-  const tailBytes = Math.floor(MAX_BYTES * 0.4);
+  let headBytes = Math.floor(maxBytes * 0.4);
+  let tailBytes = Math.floor(maxBytes * 0.4);
+
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const text = buildByteSummary(buffer, totalBytes, headBytes, tailBytes);
+    const textBytes = Buffer.byteLength(text, "utf8");
+    if (textBytes <= maxBytes) return text;
+
+    const reduction = Math.ceil((textBytes - maxBytes) / 2) + 16;
+    if (tailBytes >= headBytes && tailBytes > 0) {
+      tailBytes = Math.max(0, tailBytes - reduction);
+    } else {
+      headBytes = Math.max(0, headBytes - reduction);
+    }
+  }
+
+  const fallback = buildByteSummary(buffer, totalBytes, headBytes, tailBytes);
+  return decodeUtf8(Buffer.from(fallback, "utf8").subarray(0, maxBytes), { trimEnd: true });
+}
+
+function buildByteSummary(buffer, totalBytes, headBytes, tailBytes) {
   const tailStart = Math.max(headBytes, buffer.length - tailBytes);
   const omittedBytes = Math.max(0, totalBytes - headBytes - tailBytes);
 

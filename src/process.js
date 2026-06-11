@@ -151,7 +151,7 @@ export async function runProcess(file, args, options = {}) {
   });
 }
 
-export async function runCommand(command) {
+export async function runCommandResult(command) {
   return await new Promise((resolve, reject) => {
     const started = Date.now();
     const child = spawn(command, {
@@ -177,22 +177,24 @@ export async function runCommand(command) {
     });
     child.on("close", (code, signal) => {
       clearTimeout(timer);
-      const stdoutText = Buffer.concat(stdout).toString("utf8");
-      const stderrText = Buffer.concat(stderr).toString("utf8");
-      const durationMs = Date.now() - started;
-
-      if (code === 0 && !timedOut) {
-        resolve({ stdout: stdoutText, durationMs });
-        return;
-      }
-
-      try {
-        commandError(command, code, signal, stdoutText, stderrText, timedOut, outputTooLarge());
-      } catch (error) {
-        reject(error);
-      }
+      resolve({
+        code,
+        signal,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+        durationMs: Date.now() - started,
+        timedOut,
+        outputTooLarge: outputTooLarge(),
+      });
     });
   });
+}
+
+export async function runCommand(command) {
+  const result = await runCommandResult(command);
+  if (result.code === 0 && !result.timedOut) return { stdout: result.stdout, durationMs: result.durationMs };
+
+  commandError(command, result.code, result.signal, result.stdout, result.stderr, result.timedOut, result.outputTooLarge);
 }
 
 export async function runProcessLines(file, args, options = {}) {

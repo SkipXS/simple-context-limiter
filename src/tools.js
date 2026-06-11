@@ -11,6 +11,7 @@ import {
   CACHE_FILE,
   CACHE_TTL_MS,
   COMMAND_SHELL_NAME,
+  MAX_BYTES,
   MAX_FETCH_BYTES,
   MAX_LINES,
   MAX_READ_BYTES,
@@ -18,7 +19,7 @@ import {
   STATS_FILE,
 } from "./constants.js";
 import { decodeUtf8, formatOutput } from "./output.js";
-import { commandError, runCommand, runProcessLines } from "./process.js";
+import { commandError, runCommand, runCommandResult, runProcess, runProcessLines } from "./process.js";
 
 async function loadCache() {
   try { return pruneCache(JSON.parse(await fs.promises.readFile(CACHE_FILE, "utf8"))); } catch {
@@ -275,14 +276,15 @@ function savingsForText(originalText, returnedText) {
 }
 
 async function runTool(args) {
-  const { command, maxLines = MAX_LINES } = args ?? {};
+  const { command, maxLines = MAX_LINES, maxBytes = MAX_BYTES } = args ?? {};
   if (typeof command !== "string" || command.trim() === "") {
     invalidParams("context_run requires a non-empty command string");
   }
   const lineLimit = validateInteger(maxLines, "context_run maxLines", 10, 200);
+  const byteLimit = validateInteger(maxBytes, "context_run maxBytes", 1024, MAX_BYTES);
 
   const { stdout, durationMs } = await runCommand(command);
-  const formatted = formatOutput(stdout, lineLimit);
+  const formatted = formatOutput(stdout, lineLimit, byteLimit);
   const meta = {
     totalLines: formatted.totalLines,
     totalBytes: formatted.totalBytes,
@@ -299,12 +301,151 @@ async function runTool(args) {
   };
 }
 
+async function logsTool(args) {
+  const {
+    command,
+    maxBlocks = 10,
+    contextLines = 5,
+    maxLines = 120,
+    maxBytes = MAX_BYTES,
+  } = args ?? {};
+
+  if (typeof command !== "string" || command.trim() === "") {
+    invalidParams("context_logs requires a non-empty command string");
+  }
+
+  const blockLimit = validateInteger(maxBlocks, "context_logs maxBlocks", 1, 50);
+  const contextLimit = validateInteger(contextLines, "context_logs contextLines", 0, 20);
+  const lineLimit = validateInteger(maxLines, "context_logs maxLines", 10, 200);
+  const byteLimit = validateInteger(maxBytes, "context_logs maxBytes", 1024, MAX_BYTES);
+
+  const result = await runCommandResult(command);
+  const outputText = combinedCommandOutput(result.stdout, result.stderr);
+  const extraction = extractLogBlocks(outputText, blockLimit, contextLimit, lineLimit);
+  const statusLine = commandStatusLine(result);
+  const originalText = [statusLine, outputText || "(no output)"].join("\n");
+  const previewText = [statusLine, extraction.text].join("\n");
+  const formatted = formatOutput(previewText, lineLimit, byteLimit);
+  const logSavings = savingsForText(originalText, formatted.text);
+  const meta = {
+    totalLines: originalText.split("\n").length,
+    totalBytes: logSavings.totalBytes,
+    ...logSavings,
+    truncated: extraction.truncated || formatted.truncated || result.outputTooLarge,
+    exitCode: result.code,
+    signal: result.signal,
+    timedOut: result.timedOut,
+    outputTooLarge: result.outputTooLarge,
+    durationMs: result.durationMs,
+    shell: COMMAND_SHELL_NAME,
+    blocksFound: extraction.blocksFound,
+    blocksShown: extraction.blocksShown,
+    fallback: extraction.fallback,
+  };
+  await recordStats("context_logs", meta);
+
+  return {
+    content: [{ type: "text", text: formatted.text }],
+    _meta: meta,
+  };
+}
+
+function commandStatusLine(result) {
+  const status = result.timedOut
+    ? "timed out"
+    : result.signal
+      ? `signal ${result.signal}`
+      : `exit ${result.code}`;
+  return `Command ${status} in ${result.durationMs}ms`;
+}
+
+function combinedCommandOutput(stdout, stderr) {
+  const parts = [];
+  if (stdout) parts.push(stdout.trimEnd());
+  if (stderr) {
+    if (parts.length > 0) parts.push("", "stderr:");
+    parts.push(stderr.trimEnd());
+  }
+
+  return parts.join("\n");
+}
+
+function extractLogBlocks(text, maxBlocks, contextLines, maxLines) {
+  const lines = text ? text.split("\n") : [];
+  if (lines.length === 0) {
+    return { text: "(no output)", blocksFound: 0, blocksShown: 0, truncated: false, fallback: true };
+  }
+
+  const matches = [];
+  for (const [index, line] of lines.entries()) {
+    if (isInterestingLogLine(line)) matches.push(index);
+  }
+
+  if (matches.length === 0) {
+    const tail = lines.slice(-maxLines);
+    return {
+      text: [`No error patterns found; showing last ${tail.length} lines:`, ...tail].join("\n"),
+      blocksFound: 0,
+      blocksShown: 0,
+      truncated: lines.length > tail.length,
+      fallback: true,
+    };
+  }
+
+  const ranges = mergeLogRanges(matches.map((index) => ({
+    start: Math.max(0, index - contextLines),
+    end: Math.min(lines.length - 1, index + contextLines),
+  })));
+  const shownRanges = ranges.slice(0, maxBlocks);
+  const output = [];
+
+  for (const [rangeIndex, range] of shownRanges.entries()) {
+    if (rangeIndex > 0) output.push("---");
+    output.push(`Block ${rangeIndex + 1} (lines ${range.start + 1}-${range.end + 1}):`);
+    output.push(...lines.slice(range.start, range.end + 1));
+  }
+
+  const limitedByBlocks = ranges.length > shownRanges.length;
+  if (limitedByBlocks) output.push(`... ${ranges.length - shownRanges.length} more blocks omitted ...`);
+
+  return {
+    text: output.join("\n"),
+    blocksFound: ranges.length,
+    blocksShown: shownRanges.length,
+    truncated: limitedByBlocks,
+    fallback: false,
+  };
+}
+
+function isInterestingLogLine(line) {
+  return /\b(error|failed|failure|exception|assertion|fatal|panic|traceback|warning|warn)\b/i.test(line)
+    || /\b(ERR!|ERROR|FAIL|FAILED|FATAL|WARN)\b/.test(line)
+    || /\bTS\d{4}:/.test(line)
+    || /^\s*at\s+.+:\d+:\d+\)?$/.test(line)
+    || /^\s*\^+$/.test(line);
+}
+
+function mergeLogRanges(ranges) {
+  const merged = [];
+  for (const range of ranges) {
+    const previous = merged.at(-1);
+    if (previous && range.start <= previous.end + 1) {
+      previous.end = Math.max(previous.end, range.end);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+
+  return merged;
+}
+
 async function readTool(args) {
-  const { path: filePath, maxLines = MAX_LINES, fromLine, toLine } = args ?? {};
+  const { path: filePath, maxLines = MAX_LINES, maxBytes = MAX_BYTES, fromLine, toLine } = args ?? {};
   if (typeof filePath !== "string" || filePath.trim() === "") {
     invalidParams("context_read requires a non-empty path string");
   }
   const lineLimit = validateInteger(maxLines, "context_read maxLines", 10, 200);
+  const byteLimit = validateInteger(maxBytes, "context_read maxBytes", 1024, MAX_BYTES);
 
   const resolved = path.resolve(filePath);
   const stat = await fs.promises.stat(resolved);
@@ -319,7 +460,7 @@ async function readTool(args) {
   const { text, limited, rangeLimited, returnedLines, scannedLines } = rangeMode
     ? await readLineRange(resolved, range.fromLine, range.toLine, lineLimit, MAX_READ_BYTES)
     : await readLimitedFile(resolved, stat.size, MAX_READ_BYTES);
-  const formatted = formatOutput(text, lineLimit);
+  const formatted = formatOutput(text, lineLimit, byteLimit);
   const meta = {
     path: resolved,
     sizeBytes: stat.size,
@@ -479,6 +620,7 @@ async function searchTool(args) {
     include,
     maxMatches = 100,
     maxLines = MAX_LINES,
+    maxBytes = MAX_BYTES,
   } = args ?? {};
 
   if (typeof pattern !== "string" || pattern.trim() === "") {
@@ -492,6 +634,7 @@ async function searchTool(args) {
   }
   const limit = validateInteger(maxMatches, "context_search maxMatches", 1, 1000);
   const lineLimit = validateInteger(maxLines, "context_search maxLines", 10, 200);
+  const byteLimit = validateInteger(maxBytes, "context_search maxBytes", 1024, MAX_BYTES);
 
   const rg = await findRg();
   if (!rg) {
@@ -544,7 +687,7 @@ async function searchTool(args) {
   const text = matchLimited
     ? [...shown, `... more matches omitted ...`].join("\n")
     : originalText || "(no matches)";
-  const formatted = formatOutput(text, lineLimit);
+  const formatted = formatOutput(text, lineLimit, byteLimit);
   const searchSavings = matchLimited ? savingsForText(originalText, formatted.text) : savingsMeta(formatted);
   const meta = {
     rgPath: rg,
@@ -680,14 +823,15 @@ async function readLimitedText(res, maxBytes) {
 }
 
 async function fetchTool(args) {
-  const { url, force = false, maxLines = MAX_LINES } = args ?? {};
+  const { url, force = false, maxLines = MAX_LINES, maxBytes = MAX_BYTES } = args ?? {};
   if (force !== undefined && typeof force !== "boolean") {
     invalidParams("context_fetch force must be a boolean when provided");
   }
   const lineLimit = validateInteger(maxLines, "context_fetch maxLines", 10, 200);
+  const byteLimit = validateInteger(maxBytes, "context_fetch maxBytes", 1024, MAX_BYTES);
 
   const data = await fetchUrl(url, force);
-  const formatted = formatOutput(data.content, lineLimit);
+  const formatted = formatOutput(data.content, lineLimit, byteLimit);
   const meta = {
     totalLines: formatted.totalLines,
     totalBytes: formatted.totalBytes,
@@ -701,6 +845,168 @@ async function fetchTool(args) {
   return {
     content: [{ type: "text", text: formatted.text }],
     _meta: meta,
+  };
+}
+
+async function diffTool(args) {
+  const {
+    path: diffPath,
+    staged = false,
+    stat = true,
+    maxFiles = 20,
+    maxHunks = 20,
+    maxLines = MAX_LINES,
+    maxBytes = MAX_BYTES,
+  } = args ?? {};
+
+  if (diffPath !== undefined && (typeof diffPath !== "string" || diffPath.trim() === "")) {
+    invalidParams("context_diff path must be a non-empty string when provided");
+  }
+  if (typeof staged !== "boolean") {
+    invalidParams("context_diff staged must be a boolean when provided");
+  }
+  if (typeof stat !== "boolean") {
+    invalidParams("context_diff stat must be a boolean when provided");
+  }
+
+  const fileLimit = validateInteger(maxFiles, "context_diff maxFiles", 1, 100);
+  const hunkLimit = validateInteger(maxHunks, "context_diff maxHunks", 1, 200);
+  const lineLimit = validateInteger(maxLines, "context_diff maxLines", 10, 200);
+  const byteLimit = validateInteger(maxBytes, "context_diff maxBytes", 1024, MAX_BYTES);
+
+  const started = Date.now();
+  const diffArgs = gitDiffArgs(staged, [], diffPath);
+  const statPromise = stat ? runGit(gitDiffArgs(staged, ["--stat"], diffPath)) : undefined;
+  const diffPromise = runGit(diffArgs);
+  const [statResult, diffResult] = await Promise.all([statPromise, diffPromise]);
+  const durationMs = Date.now() - started;
+
+  const statText = statResult?.stdout.trimEnd() ?? "";
+  const fullDiff = diffResult.stdout.trimEnd();
+  const limitedDiff = limitDiff(fullDiff, fileLimit, hunkLimit);
+  const originalText = composeDiffText(statText, fullDiff);
+  const previewText = composeDiffText(statText, limitedDiff.text);
+  const formatted = formatOutput(previewText, lineLimit, byteLimit);
+  const diffSavings = savingsForText(originalText, formatted.text);
+  const meta = {
+    totalLines: originalText.split("\n").length,
+    totalBytes: diffSavings.totalBytes,
+    ...diffSavings,
+    truncated: limitedDiff.filesLimited || limitedDiff.hunksLimited || formatted.truncated,
+    staged,
+    stat,
+    filesChanged: countDiffFiles(fullDiff),
+    filesShown: limitedDiff.filesShown,
+    filesLimited: limitedDiff.filesLimited,
+    hunksChanged: countDiffHunks(fullDiff),
+    hunksShown: limitedDiff.hunksShown,
+    hunksLimited: limitedDiff.hunksLimited,
+    durationMs,
+  };
+  await recordStats("context_diff", meta);
+
+  return {
+    content: [{ type: "text", text: formatted.text }],
+    _meta: meta,
+  };
+}
+
+function gitDiffArgs(staged, extraArgs, diffPath) {
+  const args = ["diff"];
+  if (staged) args.push("--cached");
+  args.push(...extraArgs);
+  if (diffPath !== undefined) args.push("--", diffPath);
+  return args;
+}
+
+async function runGit(args) {
+  const result = await runProcess("git", args, { cwd: process.cwd(), timeout: 120_000 });
+  if (result.code !== 0 || result.timedOut || result.outputTooLarge) {
+    commandError(`git ${args.join(" ")}`, result.code, result.signal, result.stdout, result.stderr, result.timedOut, result.outputTooLarge);
+  }
+
+  return result;
+}
+
+function composeDiffText(statText, diffText) {
+  const parts = [];
+  if (statText) parts.push("Diff stat:", statText);
+  if (diffText) {
+    if (parts.length > 0) parts.push("");
+    parts.push("Diff hunks:", diffText);
+  }
+
+  return parts.length > 0 ? parts.join("\n") : "(no diff)";
+}
+
+function countDiffFiles(diffText) {
+  return diffText ? diffText.split("\n").filter((line) => line.startsWith("diff --git ")).length : 0;
+}
+
+function countDiffHunks(diffText) {
+  return diffText ? diffText.split("\n").filter((line) => line.startsWith("@@ ")).length : 0;
+}
+
+function limitDiff(diffText, maxFiles, maxHunks) {
+  if (!diffText) {
+    return { text: "", filesShown: 0, hunksShown: 0, filesLimited: false, hunksLimited: false };
+  }
+
+  const lines = diffText.split("\n");
+  const output = [];
+  let filesShown = 0;
+  let hunksShown = 0;
+  let filesLimited = false;
+  let hunksLimited = false;
+  let includeFile = false;
+  let includeHunk = false;
+  let seenHunkInFile = false;
+
+  for (const line of lines) {
+    if (line.startsWith("diff --git ")) {
+      includeHunk = false;
+      seenHunkInFile = false;
+
+      if (filesShown >= maxFiles) {
+        filesLimited = true;
+        includeFile = false;
+        continue;
+      }
+
+      includeFile = true;
+      filesShown++;
+      output.push(line);
+      continue;
+    }
+
+    if (!includeFile) continue;
+
+    if (line.startsWith("@@ ")) {
+      seenHunkInFile = true;
+      if (hunksShown >= maxHunks) {
+        hunksLimited = true;
+        includeHunk = false;
+        if (output.at(-1) !== "... more hunks omitted ...") output.push("... more hunks omitted ...");
+        continue;
+      }
+
+      includeHunk = true;
+      hunksShown++;
+      output.push(line);
+      continue;
+    }
+
+    if (!seenHunkInFile || includeHunk) output.push(line);
+  }
+
+  if (filesLimited) output.push("... more files omitted ...");
+
+  return {
+    text: output.join("\n"),
+    filesShown,
+    hunksShown,
+    filesLimited,
+    hunksLimited,
   };
 }
 
@@ -739,6 +1045,48 @@ export const tools = {
             maximum: 200,
             description: "Max lines before truncation. Default: 60.",
           },
+          maxBytes: {
+            type: "integer",
+            minimum: 1024,
+            maximum: MAX_BYTES,
+            description: "Max output bytes before head+tail truncation. Default: 32768.",
+          },
+        },
+        required: ["command"],
+      },
+    },
+    {
+      name: "context_logs",
+      description:
+        "Run a shell command and extract relevant log/error blocks instead of returning plain head+tail output. Non-zero exits return normal tool results with exit metadata.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          command: { type: "string", description: "Shell command to execute" },
+          maxBlocks: {
+            type: "integer",
+            minimum: 1,
+            maximum: 50,
+            description: "Maximum error/log blocks to show. Default: 10.",
+          },
+          contextLines: {
+            type: "integer",
+            minimum: 0,
+            maximum: 20,
+            description: "Lines of context before and after each matched log line. Default: 5.",
+          },
+          maxLines: {
+            type: "integer",
+            minimum: 10,
+            maximum: 200,
+            description: "Max output lines before head+tail truncation. Default: 120.",
+          },
+          maxBytes: {
+            type: "integer",
+            minimum: 1024,
+            maximum: MAX_BYTES,
+            description: "Max output bytes before head+tail truncation. Default: 32768.",
+          },
         },
         required: ["command"],
       },
@@ -756,6 +1104,12 @@ export const tools = {
             minimum: 10,
             maximum: 200,
             description: "Max lines before truncation. Default: 60.",
+          },
+          maxBytes: {
+            type: "integer",
+            minimum: 1024,
+            maximum: MAX_BYTES,
+            description: "Max output bytes before head+tail truncation. Default: 32768.",
           },
           fromLine: {
             type: "integer",
@@ -793,6 +1147,12 @@ export const tools = {
             maximum: 200,
             description: "Max output lines before head+tail truncation. Default: 60.",
           },
+          maxBytes: {
+            type: "integer",
+            minimum: 1024,
+            maximum: MAX_BYTES,
+            description: "Max output bytes before head+tail truncation. Default: 32768.",
+          },
         },
         required: ["pattern"],
       },
@@ -812,8 +1172,51 @@ export const tools = {
             maximum: 200,
             description: "Max lines before truncation. Default: 60.",
           },
+          maxBytes: {
+            type: "integer",
+            minimum: 1024,
+            maximum: MAX_BYTES,
+            description: "Max output bytes before head+tail truncation. Default: 32768.",
+          },
         },
         required: ["url"],
+      },
+    },
+    {
+      name: "context_diff",
+      description:
+        "Show a compact git diff preview with stat and bounded hunks. Use this instead of raw git diff when reviewing working tree or staged changes.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Optional file or directory pathspec to diff." },
+          staged: { type: "boolean", description: "Show staged changes with git diff --cached. Default: false." },
+          stat: { type: "boolean", description: "Include git diff --stat before hunks. Default: true." },
+          maxFiles: {
+            type: "integer",
+            minimum: 1,
+            maximum: 100,
+            description: "Maximum changed files with hunks to show. Default: 20.",
+          },
+          maxHunks: {
+            type: "integer",
+            minimum: 1,
+            maximum: 200,
+            description: "Maximum diff hunks to show. Default: 20.",
+          },
+          maxLines: {
+            type: "integer",
+            minimum: 10,
+            maximum: 200,
+            description: "Max output lines before head+tail truncation. Default: 60.",
+          },
+          maxBytes: {
+            type: "integer",
+            minimum: 1024,
+            maximum: MAX_BYTES,
+            description: "Max output bytes before head+tail truncation. Default: 32768.",
+          },
+        },
       },
     },
     {
@@ -830,9 +1233,11 @@ export const tools = {
 
 export async function callTool(name, args) {
   if (name === "context_run") return await runTool(args);
+  if (name === "context_logs") return await logsTool(args);
   if (name === "context_read") return await readTool(args);
   if (name === "context_search") return await searchTool(args);
   if (name === "context_fetch") return await fetchTool(args);
+  if (name === "context_diff") return await diffTool(args);
   if (name === "context_stats") return await statsTool();
 
   const error = new Error(`Unknown tool: ${name}`);
