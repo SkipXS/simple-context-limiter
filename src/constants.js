@@ -1,12 +1,13 @@
 import * as os from "node:os";
 import * as path from "node:path";
+import * as fs from "node:fs";
 
 export const SERVER_NAME = "simple-context-limiter";
-export const SERVER_VERSION = "1.0.0";
+export const SERVER_VERSION = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 export const MAX_LINES = 60;
 export const MAX_BYTES = 32 * 1024;
-export const MAX_COMMAND_BYTES = 100 * 1024 * 1024;
+export const MAX_COMMAND_BYTES = normalizeByteLimit(process.env.SIMPLE_CONTEXT_LIMITER_MAX_COMMAND_BYTES, 10 * 1024 * 1024);
 export const MAX_FETCH_BYTES = normalizeByteLimit(process.env.SIMPLE_CONTEXT_LIMITER_MAX_FETCH_BYTES, 10 * 1024 * 1024);
 export const MAX_READ_BYTES = normalizeByteLimit(process.env.SIMPLE_CONTEXT_LIMITER_MAX_READ_BYTES, 10 * 1024 * 1024);
 export const CACHE_MAX_ENTRIES = normalizeIntegerLimit(process.env.SIMPLE_CONTEXT_LIMITER_CACHE_MAX_ENTRIES, 200, 1, 10_000);

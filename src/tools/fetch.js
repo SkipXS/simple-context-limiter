@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ALLOW_NON_HTTP_FETCH, CACHE_TTL_MS, MAX_BYTES, MAX_FETCH_BYTES, MAX_LINES } from "../constants.js";
+import { ALLOW_NON_HTTP_FETCH, CACHE_TTL_MS, MAX_BYTES, MAX_FETCH_BYTES, MAX_LINES, SERVER_VERSION } from "../constants.js";
 import { getCache, saveCache } from "../cache.js";
 import { decodeUtf8, formatOutput } from "../output.js";
 import { recordStats } from "../stats.js";
@@ -58,7 +58,7 @@ async function fetchUrl(url, force) {
   let res;
   try {
     res = await fetch(url, {
-      headers: { "User-Agent": "simple-context-limiter/1.0" },
+      headers: { "User-Agent": `simple-context-limiter/${SERVER_VERSION}` },
       signal: AbortSignal.timeout(30_000),
     });
   } catch (cause) {

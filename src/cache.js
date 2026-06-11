@@ -1,7 +1,9 @@
 import * as fs from "node:fs";
-import { CACHE_DIR, CACHE_FILE, CACHE_MAX_BYTES, CACHE_MAX_ENTRIES, CACHE_TTL_MS } from "./constants.js";
+import { CACHE_FILE, CACHE_MAX_BYTES, CACHE_MAX_ENTRIES, CACHE_TTL_MS } from "./constants.js";
+import { writeJsonAtomically } from "./storage.js";
 
 let cache;
+let cacheWrite = Promise.resolve();
 
 async function loadCache() {
   try { return pruneCache(JSON.parse(await fs.promises.readFile(CACHE_FILE, "utf8"))); } catch {
@@ -11,12 +13,15 @@ async function loadCache() {
 
 export async function saveCache(nextCache) {
   cache = pruneCache(nextCache);
-  try {
-    await fs.promises.mkdir(CACHE_DIR, { recursive: true });
-    await fs.promises.writeFile(CACHE_FILE, JSON.stringify(cache, null, 2));
-  } catch {
-    // Cache failures should not make context_fetch unusable.
-  }
+  const snapshot = cache;
+  cacheWrite = cacheWrite.catch(() => {}).then(async () => {
+    try {
+      await writeJsonAtomically(CACHE_FILE, snapshot);
+    } catch {
+      // Cache failures should not make context_fetch unusable.
+    }
+  });
+  await cacheWrite;
 }
 
 function pruneCache(cache) {

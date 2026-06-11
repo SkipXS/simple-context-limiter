@@ -34,6 +34,8 @@ Response `_meta` includes:
 }
 ```
 
+Command output collection is capped at 10 MB by default before formatting. Override with `SIMPLE_CONTEXT_LIMITER_MAX_COMMAND_BYTES` if needed.
+
 ### `context_logs`
 
 Runs a shell command and extracts relevant error or warning blocks with surrounding context. Use it for tests, builds, lints, compiler output, server logs, and CI-style output where the important lines may appear in the middle.
@@ -231,6 +233,7 @@ If you need a specific command shell for `context_run`, set `SIMPLE_CONTEXT_LIMI
 git clone https://github.com/SkipXS/simple-context-limiter.git
 cd simple-context-limiter
 npm test
+npm run check
 ```
 
 Then point your MCP client at the local `server.js` with Node.

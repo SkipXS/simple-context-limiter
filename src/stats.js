@@ -1,7 +1,9 @@
 import * as fs from "node:fs";
-import { CACHE_DIR, STATS_FILE } from "./constants.js";
+import { STATS_FILE } from "./constants.js";
+import { writeJsonAtomically } from "./storage.js";
 
 let stats;
+let statsUpdate = Promise.resolve();
 
 function emptyStats() {
   return { version: 1, projects: {} };
@@ -58,9 +60,9 @@ async function loadStats() {
 
 async function saveStats(nextStats) {
   stats = normalizeStats(nextStats);
+  const snapshot = stats;
   try {
-    await fs.promises.mkdir(CACHE_DIR, { recursive: true });
-    await fs.promises.writeFile(STATS_FILE, JSON.stringify(stats, null, 2));
+    await writeJsonAtomically(STATS_FILE, snapshot);
   } catch {
     // Stats failures should not make context tools unusable.
   }
@@ -84,17 +86,20 @@ function addCounter(target, meta) {
 }
 
 export async function recordStats(toolName, meta) {
-  const currentStats = await getStats();
-  const project = process.cwd();
-  const projectStats = currentStats.projects[project] ?? { ...emptyCounter(), byTool: {} };
-  const toolStats = projectStats.byTool[toolName] ?? emptyCounter();
+  statsUpdate = statsUpdate.catch(() => {}).then(async () => {
+    const currentStats = await getStats();
+    const project = process.cwd();
+    const projectStats = currentStats.projects[project] ?? { ...emptyCounter(), byTool: {} };
+    const toolStats = projectStats.byTool[toolName] ?? emptyCounter();
 
-  addCounter(projectStats, meta);
-  addCounter(toolStats, meta);
+    addCounter(projectStats, meta);
+    addCounter(toolStats, meta);
 
-  projectStats.byTool[toolName] = toolStats;
-  currentStats.projects[project] = projectStats;
-  await saveStats(currentStats);
+    projectStats.byTool[toolName] = toolStats;
+    currentStats.projects[project] = projectStats;
+    await saveStats(currentStats);
+  });
+  await statsUpdate;
 }
 
 export function withSavedPercent(counter) {

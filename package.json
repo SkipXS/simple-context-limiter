@@ -17,12 +17,14 @@
   },
   "files": [
     "server.js",
+    "check-syntax.js",
     "src/",
     "smoke-test.js",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
+    "check": "node check-syntax.js",
     "test": "node smoke-test.js"
   },
   "bin": { "simple-context-limiter": "server.js" },
