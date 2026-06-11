@@ -83,13 +83,15 @@ export async function searchTool(args) {
     maxBytes: MAX_READ_BYTES,
   });
   if (result.code === 1) {
+    const text = "(no matches)";
+    const totalBytes = Buffer.byteLength(text, "utf8");
     const meta = {
       rgPath: rg,
       totalMatches: 0,
       totalMatchesKnown: true,
       shownMatches: 0,
-      totalBytes: 0,
-      returnedBytes: Buffer.byteLength("(no matches)", "utf8"),
+      totalBytes,
+      returnedBytes: totalBytes,
       savedBytes: 0,
       savedPercent: 0,
       estimatedTokensSaved: 0,
@@ -99,7 +101,7 @@ export async function searchTool(args) {
     await recordStats("context_search", meta);
 
     return {
-      content: [{ type: "text", text: "(no matches)" }],
+      content: [{ type: "text", text }],
       _meta: meta,
     };
   }

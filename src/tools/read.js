@@ -92,12 +92,23 @@ async function readLineRange(filePath, fromLine, toLine, maxLines, maxBytes, tim
       return false;
     }
 
-    currentLine += text;
-    if (bytes + Buffer.byteLength(currentLine, "utf8") > maxBytes) {
+    const nextLine = currentLine + text;
+    if (bytes + Buffer.byteLength(nextLine, "utf8") > maxBytes) {
       limited = true;
+      const remaining = maxBytes - bytes;
+      if (remaining > 0) {
+        const clipped = decodeUtf8(Buffer.from(nextLine, "utf8").subarray(0, remaining), { trimEnd: true });
+        if (clipped) {
+          lines.push(clipped);
+          bytes += Buffer.byteLength(clipped, "utf8");
+          lineNumber++;
+        }
+      }
+      currentLine = "";
       return false;
     }
 
+    currentLine = nextLine;
     return true;
   }
 

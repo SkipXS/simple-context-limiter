@@ -141,6 +141,9 @@ try {
   assert.equal(longLine.truncated, true);
   assert.ok(Buffer.byteLength(longLine.text, "utf8") <= MAX_BYTES);
   assert.doesNotMatch(longLine.text, /-\d+ lines omitted/);
+  const emptyOutput = formatOutput("");
+  assert.equal(emptyOutput.text, "(no output)");
+  assert.equal(emptyOutput.totalBytes, emptyOutput.returnedBytes);
   const customByteLimit = formatOutput("x".repeat(8192), 60, 1024);
   assert.equal(customByteLimit.truncated, true);
   assert.ok(Buffer.byteLength(customByteLimit.text, "utf8") <= 1024);
@@ -201,6 +204,21 @@ try {
   assert.ok(files.result, JSON.stringify(files));
   assert.match(files.result.content[0].text, /server\.js/);
   assert.equal(typeof files.result._meta.totalFiles, "number");
+
+  const fallbackFilesDir = join(tempDir, "fallback-files");
+  await mkdir(join(fallbackFilesDir, "sub"), { recursive: true });
+  await writeFile(join(fallbackFilesDir, "sub", "a.txt"), "a\n", "utf8");
+  const fallbackFilesRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
+    const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
+    const result = await callTool('context_files', { path: 'sub', maxFiles: 20 });
+    console.log(JSON.stringify(result.content[0].text));
+  `], {
+    cwd: fallbackFilesDir,
+    timeout: 5_000,
+    env: { ...process.env, PATH: "", Path: "" },
+  });
+  assert.equal(fallbackFilesRun.code, 0, fallbackFilesRun.stderr);
+  assert.match(JSON.parse(fallbackFilesRun.stdout.trim()), /sub\/a\.txt/);
 
   const tree = await request("tools/call", {
     name: "context_tree",
@@ -429,7 +447,8 @@ try {
   });
   assert.equal(byteLimitedRangeRead.result._meta.truncated, true);
   assert.equal(byteLimitedRangeRead.result._meta.fileReadLimited, true);
-  assert.equal(byteLimitedRangeRead.result._meta.returnedLines, 0);
+  assert.equal(byteLimitedRangeRead.result._meta.returnedLines, 1);
+  assert.match(byteLimitedRangeRead.result.content[0].text, /^x+/);
 
   const invalidRangeRead = await request("tools/call", {
     name: "context_read",
@@ -497,6 +516,20 @@ try {
     assert.ok(byteLimitedSearch.result, JSON.stringify(byteLimitedSearch));
     assert.equal(byteLimitedSearch.result._meta.truncated, true);
     assert.ok(byteLimitedSearch.result._meta.returnedBytes <= 1024);
+
+    const noMatchSearch = await request("tools/call", {
+      name: "context_search",
+      arguments: { pattern: "does-not-exist", path: largeFile, maxMatches: 5 },
+    });
+    assert.equal(noMatchSearch.result.content[0].text, "(no matches)");
+    assert.equal(noMatchSearch.result._meta.totalBytes, noMatchSearch.result._meta.returnedBytes);
+
+    const noMatchGrepContext = await request("tools/call", {
+      name: "context_grep_context",
+      arguments: { pattern: "does-not-exist", path: largeFile, maxMatches: 5 },
+    });
+    assert.equal(noMatchGrepContext.result.content[0].text, "(no matches)");
+    assert.equal(noMatchGrepContext.result._meta.totalBytes, noMatchGrepContext.result._meta.returnedBytes);
   }
 
   const invalidSearchMaxMatches = await request("tools/call", {
@@ -524,6 +557,13 @@ try {
   assert.ok(fetched.result._meta.savedBytes > 0);
   assert.equal(fetched.result._meta.downloadLimited, true);
   assert.match(fetched.result.content[0].text, /lines omitted/);
+
+  const fetchedAgain = await request("tools/call", {
+    name: "context_fetch",
+    arguments: { url: `data:text/html,${encodeURIComponent(html)}`, maxLines: 20 },
+  });
+  assert.equal(fetchedAgain.result._meta.cached, false);
+  assert.equal(fetchedAgain.result._meta.downloadLimited, true);
 
   const entityFetch = await request("tools/call", {
     name: "context_fetch",

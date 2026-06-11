@@ -23,8 +23,13 @@ export function formatOutput(output, maxLines = MAX_LINES, maxBytes = MAX_BYTES)
   const lines = output.split("\n");
   const totalLines = lines.length;
 
+  if (output === "") {
+    const placeholder = "(no output)";
+    return withSavings(placeholder, totalLines, Buffer.byteLength(placeholder, "utf8"), false);
+  }
+
   if (totalLines <= limit && totalBytes <= byteLimit) {
-    return withSavings(output || "(no output)", totalLines, totalBytes, false);
+    return withSavings(output, totalLines, totalBytes, false);
   }
 
   if (totalLines <= limit) {

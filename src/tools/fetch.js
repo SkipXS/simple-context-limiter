@@ -65,7 +65,7 @@ async function fetchUrl(url, force) {
   const key = createHash("sha256").update(url).digest("hex");
   const currentCache = await getCache();
   const cached = currentCache[key];
-  if (!force && cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+  if (!force && cached && !cached.limited && Date.now() - cached.ts < CACHE_TTL_MS) {
     return { content: cached.content, cached: true, limited: cached.limited ?? false };
   }
 
@@ -97,7 +97,8 @@ async function fetchUrl(url, force) {
   const text = contentType.includes("html") ? htmlToText(raw) : raw;
 
   await updateCache((cache) => {
-    cache[key] = { ts: Date.now(), content: text, limited };
+    if (limited) delete cache[key];
+    else cache[key] = { ts: Date.now(), content: text, limited };
   });
   return { content: text, cached: false, limited };
 }

@@ -50,8 +50,9 @@ async function listFiles(inputPath) {
     if (git.code === 0) return git.stdout.split("\n").filter(Boolean);
   } catch {}
 
-  const root = path.resolve(inputPath);
-  return await walkFiles(root, root);
+  const root = process.cwd();
+  const start = path.resolve(inputPath);
+  return await walkFiles(root, start);
 }
 
 async function walkFiles(root, current) {

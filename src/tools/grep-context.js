@@ -39,7 +39,8 @@ export async function grepContextTool(args) {
 
 async function noMatches(rg, durationMs) {
   const text = "(no matches)";
-  const meta = { rgPath: rg, linesRead: 0, totalLines: 1, totalBytes: 0, returnedBytes: Buffer.byteLength(text, "utf8"), savedBytes: 0, savedPercent: 0, estimatedTokensSaved: 0, truncated: false, durationMs };
+  const totalBytes = Buffer.byteLength(text, "utf8");
+  const meta = { rgPath: rg, linesRead: 0, totalLines: 1, totalBytes, returnedBytes: totalBytes, savedBytes: 0, savedPercent: 0, estimatedTokensSaved: 0, truncated: false, durationMs };
   await recordStats("context_grep_context", meta);
   return { content: [{ type: "text", text }], _meta: meta };
 }
