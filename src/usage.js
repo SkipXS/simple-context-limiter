@@ -181,11 +181,11 @@ function recommendTools(commandSummaries, toolSummaries) {
   const commandMap = new Map(commandSummaries.map((summary) => [summary.name, summary]));
   const toolMap = new Map(toolSummaries.map((summary) => [summary.name, summary]));
 
-  addRecommendation(recommendations, commandMap.get("git-history"), "context_git_history", "Summarize git log/show/blame output compactly.");
+  addRecommendation(recommendations, commandMap.get("git-history"), "context_diff mode=history", "Summarize git log output compactly without adding another tool.");
   addRecommendation(recommendations, commandMap.get("dependencies"), "context_dependencies", "Summarize npm/pnpm/yarn dependency inspection output.");
   addRecommendation(recommendations, commandMap.get("infra-logs"), "context_infra_logs", "Extract relevant docker/kubectl log blocks.");
   addRecommendation(recommendations, commandMap.get("filesystem-discovery"), "context_size_or_find", "Provide bounded file finding and size summaries.");
-  addRecommendation(recommendations, commandMap.get("file-read"), "context_read_guidance", "Improve instructions or add file-read conveniences.");
+  addRecommendation(recommendations, commandMap.get("file-read"), "context_read path/fromLine/paths", "Use targeted ranges for one file and paths for additional non-ranged file previews.");
 
   const search = commandMap.get("search-discovery");
   const searchTool = toolMap.get("context_search");
@@ -234,12 +234,12 @@ function formatUsageReport(report) {
   }
 
   if (report.recommendations.length > 0) {
-    lines.push("", "Potential new tools:");
+    lines.push("", "Suggested tools/modes:");
     for (const recommendation of report.recommendations.slice(0, 10)) {
       lines.push(`${recommendation.toolName}: ${recommendation.evidence} - ${recommendation.reason}`);
     }
   } else {
-    lines.push("", "Potential new tools:", "No strong candidates yet.");
+    lines.push("", "Suggested tools/modes:", "No strong candidates yet.");
   }
 
   return lines.join("\n");

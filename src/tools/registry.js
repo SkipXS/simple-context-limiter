@@ -229,19 +229,19 @@ export const tools = {
     {
       name: "context_diff",
       description:
-        "Show a compact git diff preview with stat and bounded hunks. Use this instead of raw git diff when reviewing working tree or staged changes.",
+        "Show compact git diffs, changed-file status, or commit history. Use this instead of raw git diff/status/log when reviewing a repo.",
       inputSchema: {
         type: "object",
         properties: {
-          path: { type: "string", description: "Optional file or directory pathspec to diff. Blank values are treated as omitted." },
-          mode: { type: "string", description: "Return diff hunks or compact changed-file status. Allowed values: diff, status. Default: diff." },
+          path: { type: "string", description: "Optional file or directory pathspec to diff or filter history. Blank values are treated as omitted." },
+          mode: { type: "string", description: "Return diff hunks, compact changed-file status, or commit history. Allowed values: diff, status, history. Default: diff." },
           staged: { type: "boolean", description: "Show staged changes with git diff --cached. Default: false." },
           stat: { type: "boolean", description: "Include git diff --stat before hunks. Default: true." },
           maxFiles: {
             type: "integer",
             minimum: 1,
             maximum: 100,
-            description: "Maximum changed files with hunks to show. Default: 20.",
+            description: "Maximum changed files with hunks to show, or commits for mode=history. Default: 20.",
           },
           maxHunks: {
             type: "integer",
@@ -267,11 +267,11 @@ export const tools = {
     {
       name: "context_usage",
       description:
-        "Show aggregate savings stats or summarize local usage telemetry. Use mode=stats or mode=report.",
+        "Show aggregate savings stats, local usage telemetry, or usage guidance. Use mode=stats, mode=report, or mode=guidance.",
       inputSchema: {
         type: "object",
         properties: {
-          mode: { type: "string", description: "Report type. Allowed values: stats, report. Default: stats." },
+          mode: { type: "string", description: "Report type. Allowed values: stats, report, guidance. Default: stats." },
           maxEvents: { type: "integer", minimum: 1, maximum: 10000, description: "Maximum recent usage events to analyze. Default: 1000." },
           maxLines: { type: "integer", minimum: 10, maximum: 200, description: "Max lines before truncation. Default: 60." },
           maxBytes: { type: "integer", minimum: 1024, maximum: MAX_BYTES, description: "Max output bytes before truncation. Default: 32768." },

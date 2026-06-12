@@ -6,7 +6,7 @@ import { invalidParams, savingsMeta, validateInteger } from "./shared.js";
 
 export async function usageTool(args) {
   const { mode = "stats", maxEvents = 1000, maxLines = MAX_LINES, maxBytes = MAX_BYTES } = args ?? {};
-  if (mode !== "stats" && mode !== "report") invalidParams("context_usage mode must be \"stats\" or \"report\"");
+  if (mode !== "stats" && mode !== "report" && mode !== "guidance") invalidParams("context_usage mode must be \"stats\", \"report\", or \"guidance\"");
 
   const lineLimit = validateInteger(maxLines, "context_usage maxLines", 10, 200);
   const byteLimit = validateInteger(maxBytes, "context_usage maxBytes", 1024, MAX_BYTES);
@@ -15,7 +15,8 @@ export async function usageTool(args) {
   const eventLimit = validateInteger(maxEvents, "context_usage maxEvents", 1, 10000);
   const started = Date.now();
   const report = await usageReport({ maxEvents: eventLimit });
-  const formatted = formatOutput(report.text, lineLimit, byteLimit);
+  const text = mode === "guidance" ? formatGuidance(report.meta) : report.text;
+  const formatted = formatOutput(text, lineLimit, byteLimit);
   const meta = {
     mode,
     ...report.meta,
@@ -27,6 +28,49 @@ export async function usageTool(args) {
   };
 
   return { content: [{ type: "text", text: formatted.text }], _meta: meta };
+}
+
+function formatGuidance(report) {
+  if (report.eventsAnalyzed === 0) {
+    return [
+      `Usage guidance for ${report.project}`,
+      `Log file: ${report.logFile}`,
+      "No usage events found yet.",
+    ].join("\n");
+  }
+
+  const lines = [
+    `Usage guidance for ${report.project}`,
+    `Events analyzed: ${report.eventsAnalyzed} (${report.projectEventsRead} for this project, ${report.eventsRead} read)`,
+    `Truncated calls: ${report.truncatedCalls}`,
+    `Failed calls: ${report.failedCalls}`,
+  ];
+
+  lines.push("", "Recommended tools/modes:");
+  if (report.recommendations.length > 0) {
+    for (const recommendation of report.recommendations.slice(0, 10)) {
+      lines.push(`${recommendation.toolName}: ${recommendation.evidence} - ${recommendation.reason}`);
+    }
+  } else {
+    lines.push("No strong candidates yet.");
+  }
+
+  const noisyTools = report.byTool
+    .filter((summary) => summary.failed > 0 || summary.truncated > 0)
+    .slice(0, 10);
+  if (noisyTools.length > 0) {
+    lines.push("", "High-signal tool patterns:");
+    for (const summary of noisyTools) {
+      lines.push(`${summary.name}: ${summary.calls} calls, ${summary.truncated} truncated, ${summary.failed} failed`);
+    }
+  }
+
+  lines.push("", "Practical guidance:");
+  lines.push("Use context_diff mode=history instead of raw git log for compact commit history.");
+  lines.push("Use context_read path with fromLine/toLine for targeted ranges; use paths for additional non-ranged files.");
+  lines.push("When _meta.truncated is true, retry with a narrower path/range/query before using raw shell output.");
+
+  return lines.join("\n");
 }
 
 async function statsResult(maxLines, maxBytes) {

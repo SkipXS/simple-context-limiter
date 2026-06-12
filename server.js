@@ -100,10 +100,10 @@ const instructions = "Default to context_run, context_logs, context_read, contex
   + "Use context_read instead of cat/type/Get-Content for local file previews; pass paths when you need several known files. "
   + "Use context_search instead of raw rg/grep commands for bounded local search results; pass contextLines when you need surrounding lines. "
   + "Use context_discover for repo summaries, tracked-file lists, directory trees, and source outlines before broad file reads. "
-  + "Use context_diff with mode=status before full diffs when you only need changed file names/status. "
+  + "Use context_diff with mode=status before full diffs when you only need changed file names/status, and mode=history instead of raw git log for compact commit history. "
   + "Use context_fetch instead of web_fetch/webfetch for pages you do not need as raw HTML. "
   + "Use context_diff instead of raw git diff when reviewing working tree or staged changes. "
-  + "Use context_usage for aggregate savings stats or local usage-pattern reports. "
+  + "Use context_usage for aggregate savings stats, local usage-pattern reports, or mode=guidance suggestions. "
   + "Use native shell/read/fetch/diff tools only when you specifically need complete output, exact stderr/exit behavior, interactivity, or unsupported behavior. "
   + "Read the _meta field after each call: if truncated is true, retry with a narrower query/range or higher maxLines/maxBytes before falling back to native tools.";
 

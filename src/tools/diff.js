@@ -21,7 +21,7 @@ export async function diffTool(args) {
     if (typeof diffPath !== "string") invalidParams("context_diff path must be a string when provided");
     if (diffPath.trim() === "") normalizedDiffPath = undefined;
   }
-  if (mode !== "diff" && mode !== "status") invalidParams("context_diff mode must be \"diff\" or \"status\"");
+  if (mode !== "diff" && mode !== "status" && mode !== "history") invalidParams("context_diff mode must be \"diff\", \"status\", or \"history\"");
   if (typeof staged !== "boolean") {
     invalidParams("context_diff staged must be a boolean when provided");
   }
@@ -35,6 +35,7 @@ export async function diffTool(args) {
   const byteLimit = validateInteger(maxBytes, "context_diff maxBytes", 1024, MAX_BYTES);
 
   if (mode === "status") return await statusTool(normalizedDiffPath, staged, lineLimit, byteLimit);
+  if (mode === "history") return await historyTool(normalizedDiffPath, fileLimit, lineLimit, byteLimit);
 
   const started = Date.now();
   const diffArgs = gitDiffArgs(staged, [], normalizedDiffPath);
@@ -72,6 +73,37 @@ export async function diffTool(args) {
     content: [{ type: "text", text: formatted.text }],
     _meta: meta,
   };
+}
+
+async function historyTool(diffPath, maxCommits, maxLines, maxBytes) {
+  const started = Date.now();
+  const args = [
+    "log",
+    `--max-count=${maxCommits}`,
+    "--date=short",
+    "--pretty=format:commit %h%nDate: %ad%nAuthor: %an%nSubject: %s",
+    "--name-status",
+  ];
+  if (diffPath !== undefined) args.push("--", diffPath);
+  const result = await runGit(args);
+  const raw = result.stdout.trimEnd();
+  const text = raw ? `Commit history:\n${raw}` : "(no commit history)";
+  const formatted = formatOutput(text, maxLines, maxBytes);
+  const historySavings = savingsForText(text, formatted.text);
+  const meta = {
+    mode: "history",
+    path: diffPath,
+    maxCommits,
+    commitsShown: countHistoryCommits(raw),
+    totalLines: text.split("\n").length,
+    totalBytes: historySavings.totalBytes,
+    ...historySavings,
+    truncated: formatted.truncated,
+    durationMs: Date.now() - started,
+  };
+  await recordStats("context_diff", meta);
+
+  return { content: [{ type: "text", text: formatted.text }], _meta: meta };
 }
 
 async function statusTool(diffPath, staged, maxLines, maxBytes) {
@@ -145,6 +177,10 @@ function countDiffFiles(diffText) {
 
 function countDiffHunks(diffText) {
   return diffText ? diffText.split("\n").filter((line) => line.startsWith("@@ ")).length : 0;
+}
+
+function countHistoryCommits(historyText) {
+  return historyText ? historyText.split("\n").filter((line) => line.startsWith("commit ")).length : 0;
 }
 
 function limitDiff(diffText, maxFiles, maxHunks) {

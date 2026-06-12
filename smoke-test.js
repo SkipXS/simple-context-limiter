@@ -1129,9 +1129,10 @@ try {
       const diff = await callTool('context_diff', { maxFiles: 1, maxHunks: 1, maxBytes: 4096 });
       const blankPathDiff = await callTool('context_diff', { path: '', maxBytes: 4096 });
       const changedFiles = await callTool('context_diff', { mode: 'status', maxBytes: 4096 });
+      const history = await callTool('context_diff', { mode: 'history', maxFiles: 5, maxBytes: 4096 });
       const noStagedStatus = await callTool('context_diff', { mode: 'status', staged: true, maxBytes: 4096 });
       const noStagedDiff = await callTool('context_diff', { staged: true, maxBytes: 4096 });
-      console.log(JSON.stringify({ diff: { text: diff.content[0].text, meta: diff._meta }, blankPathDiff: { text: blankPathDiff.content[0].text, meta: blankPathDiff._meta }, changedFiles: { text: changedFiles.content[0].text, meta: changedFiles._meta }, noStagedStatus: { text: noStagedStatus.content[0].text, meta: noStagedStatus._meta }, noStagedDiff: { text: noStagedDiff.content[0].text, meta: noStagedDiff._meta } }));
+      console.log(JSON.stringify({ diff: { text: diff.content[0].text, meta: diff._meta }, blankPathDiff: { text: blankPathDiff.content[0].text, meta: blankPathDiff._meta }, changedFiles: { text: changedFiles.content[0].text, meta: changedFiles._meta }, history: { text: history.content[0].text, meta: history._meta }, noStagedStatus: { text: noStagedStatus.content[0].text, meta: noStagedStatus._meta }, noStagedDiff: { text: noStagedDiff.content[0].text, meta: noStagedDiff._meta } }));
     `], {
       cwd: gitDir,
       timeout: 5_000,
@@ -1162,6 +1163,12 @@ try {
     assert.doesNotMatch(diffPayload.changedFiles.text, /untracked\.txt/);
     assert.equal(diffPayload.changedFiles.meta.changedFiles, 2);
     assert.equal(diffPayload.changedFiles.meta.staged, false);
+    assert.match(diffPayload.history.text, /Commit history:/);
+    assert.match(diffPayload.history.text, /Subject: initial/);
+    assert.match(diffPayload.history.text, /a\.txt/);
+    assert.equal(diffPayload.history.meta.mode, "history");
+    assert.equal(diffPayload.history.meta.commitsShown, 1);
+    assert.equal(diffPayload.history.meta.maxCommits, 5);
     assert.equal(diffPayload.noStagedStatus.text, "(no changed files)");
     assert.equal(diffPayload.noStagedStatus.meta.staged, true);
     assert.equal(diffPayload.noStagedStatus.meta.changedFiles, 0);
@@ -1247,8 +1254,9 @@ try {
     }
     await callTool('context_run', { command: ${JSON.stringify(isPowerShellConfigured() ? `& ${shellQuote(process.execPath)} -e "console.log('x'.repeat(50000))"` : `${shellQuote(process.execPath)} -e "console.log('x'.repeat(50000))"`)}, maxLines: 20 });
     const report = await callTool('context_usage', { mode: 'report', maxEvents: 20 });
+    const guidance = await callTool('context_usage', { mode: 'guidance', maxEvents: 20 });
     const usageLog = await readFile(join(process.env.HOME, '.simple-context-limiter', 'usage.jsonl'), 'utf8');
-    console.log(JSON.stringify({ text: report.content[0].text, meta: report._meta, usageLog }));
+    console.log(JSON.stringify({ text: report.content[0].text, guidance: guidance.content[0].text, meta: report._meta, guidanceMeta: guidance._meta, usageLog }));
   `], {
     cwd: import.meta.dirname,
     timeout: 10_000,
@@ -1264,7 +1272,10 @@ try {
   assert.match(usagePayload.text, /Usage summary/);
   assert.match(usagePayload.text, /context_run:/);
   assert.match(usagePayload.text, /git-history:/);
-  assert.match(usagePayload.text, /context_git_history:/);
+  assert.match(usagePayload.text, /context_diff mode=history:/);
+  assert.match(usagePayload.guidance, /Usage guidance/);
+  assert.match(usagePayload.guidance, /context_diff mode=history:/);
+  assert.equal(usagePayload.guidanceMeta.mode, "guidance");
   assert.equal(usagePayload.meta.loggingEnabled, true);
   assert.equal(usagePayload.meta.byCommandKind.some((entry) => entry.name === "git-history"), true);
   assert.equal(usagePayload.usageLog.includes("git log --oneline"), false);

@@ -12,8 +12,8 @@ A minimal MCP server that keeps large command, log, file, search, repo-discovery
 | `context_search` | Searching local files with bounded ripgrep output or optional ast-grep structural search | raw `rg` / `grep` / `sg` commands |
 | `context_discover` | Repo summaries, file lists, trees, and source outlines | broad globs, recursive trees, several setup reads |
 | `context_fetch` | Fetching web pages as readable text | `webfetch`, raw HTML downloads |
-| `context_diff` | Reviewing compact Git diffs or changed-file status | raw `git diff` / `git status` output |
-| `context_usage` | Viewing savings stats or local usage reports | manual accounting, guessing from project trees alone |
+| `context_diff` | Reviewing compact Git diffs, changed-file status, or commit history | raw `git diff` / `git status` / `git log` output |
+| `context_usage` | Viewing savings stats, local usage reports, or guidance | manual accounting, guessing from project trees alone |
 
 ### `context_run`
 
@@ -70,7 +70,7 @@ For larger targeted source sections, raise `maxLines` up to 500 while keeping `f
 ```
 
 File reads are capped at 10 MB by default before formatting. Override with `SIMPLE_CONTEXT_LIMITER_MAX_READ_BYTES` if needed.
-When `fromLine` or `toLine` is used, the file is streamed line-by-line and `maxLines` still caps the returned range. Line ranges are only supported with a single `path`, not with `paths`.
+When `fromLine` or `toLine` is used, the file is streamed line-by-line and `maxLines` still caps the returned range. Use `path` to identify the ranged file; if `paths` is also provided, those files are included as additional non-ranged previews.
 
 Read multiple known files in one bounded response:
 
@@ -147,10 +147,14 @@ Use `context_logs` for test/check commands when you want error blocks or a compa
 
 simple-context-limiter records local usage metadata by default in `~/.simple-context-limiter/usage.jsonl`, including the current project path (`process.cwd()`). It does not store tool outputs and does not upload anything. For shell commands, it stores a command class such as `git-history`, `dependencies`, or `infra-logs`, not the raw command string. The log is pruned after appends and capped by `SIMPLE_CONTEXT_LIMITER_USAGE_LOG_MAX_BYTES` (default 10 MB).
 
-Use `context_usage` to see aggregate savings stats or which new tools may be worth adding from local usage patterns:
+Use `context_usage` to see aggregate savings stats, local usage reports, or guidance from local usage patterns:
 
 ```json
 { "mode": "report", "maxEvents": 1000, "maxLines": 100 }
+```
+
+```json
+{ "mode": "guidance", "maxEvents": 1000, "maxLines": 100 }
 ```
 
 Opt out by setting `SIMPLE_CONTEXT_LIMITER_USAGE_LOG=0` or `SIMPLE_CONTEXT_LIMITER_DISABLE_USAGE_LOG=1` in the MCP server environment.
@@ -169,7 +173,7 @@ HTTP(S) fetches are not restricted to public internet hosts. `context_fetch` can
 
 ### `context_diff`
 
-Shows a compact Git diff preview for the current project. It includes `git diff --stat` by default, then bounded diff hunks.
+Shows a compact Git diff preview, changed-file status, or commit history for the current project. Diff mode includes `git diff --stat` by default, then bounded diff hunks.
 
 ```json
 { "path": "src/tools.js", "maxFiles": 20, "maxHunks": 20, "maxBytes": 16384 }
@@ -190,9 +194,17 @@ Show compact changed-file status instead of diff hunks:
 { "mode": "status", "maxBytes": 16384 }
 ```
 
+Show compact commit history instead of raw `git log`:
+
+```json
+{ "mode": "history", "maxFiles": 20, "maxBytes": 16384 }
+```
+
+In `mode: "history"`, `maxFiles` acts as the maximum commit count and `path` filters history to a file or directory.
+
 ### `context_usage`
 
-Shows aggregate savings statistics for the current project by default. Use `mode: "report"` for local usage telemetry and tool recommendations. The project key is the MCP server's `process.cwd()`.
+Shows aggregate savings statistics for the current project by default. Use `mode: "report"` for local usage telemetry and `mode: "guidance"` for concrete suggestions. The project key is the MCP server's `process.cwd()`.
 
 ```json
 {}
