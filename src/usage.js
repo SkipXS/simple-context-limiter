@@ -79,8 +79,7 @@ export async function usageReport({ maxEvents = 1000 } = {}) {
     };
   }
   const projectEntries = entries.filter((entry) => entry.project === project);
-  const sourceEntries = projectEntries.length > 0 ? projectEntries : entries;
-  const report = summarizeUsage(sourceEntries, project, entries.length, projectEntries.length);
+  const report = summarizeUsage(projectEntries, project, entries.length, projectEntries.length);
 
   return {
     text: formatUsageReport(report),

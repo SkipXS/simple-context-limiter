@@ -1310,6 +1310,44 @@ try {
   assert.equal(usagePayload.meta.byCommandKind.some((entry) => entry.name === "git-history"), true);
   assert.equal(usagePayload.usageLog.includes("git log --oneline"), false);
 
+  const usageProjectScopeRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
+    import { mkdir, writeFile } from 'node:fs/promises';
+    import { join } from 'node:path';
+    const { callTool } = await import('./src/tools.js');
+    const logDir = join(process.env.HOME, '.simple-context-limiter');
+    await mkdir(logDir, { recursive: true });
+    await writeFile(join(logDir, 'usage.jsonl'), JSON.stringify({
+      ts: Date.now(),
+      project: 'C:/other-project',
+      tool: 'context_run',
+      durationMs: 1,
+      ok: true,
+      truncated: true,
+      totalBytes: 10000,
+      returnedBytes: 100,
+      savedBytes: 9900,
+      commandKind: 'git-history',
+    }) + '\\n', 'utf8');
+    const report = await callTool('context_usage', { mode: 'report', maxEvents: 20 });
+    console.log(JSON.stringify({ text: report.content[0].text, meta: report._meta }));
+  `], {
+    cwd: import.meta.dirname,
+    timeout: 5_000,
+    env: {
+      ...process.env,
+      HOME: join(tempDir, "usage-project-scope-home"),
+      USERPROFILE: join(tempDir, "usage-project-scope-home"),
+      SIMPLE_CONTEXT_LIMITER_USAGE_LOG: "1",
+    },
+  });
+  assert.equal(usageProjectScopeRun.code, 0, usageProjectScopeRun.stderr);
+  const usageProjectScopePayload = JSON.parse(usageProjectScopeRun.stdout.trim());
+  assert.match(usageProjectScopePayload.text, /No usage events found yet/);
+  assert.doesNotMatch(usageProjectScopePayload.text, /git-history/);
+  assert.equal(usageProjectScopePayload.meta.eventsRead, 1);
+  assert.equal(usageProjectScopePayload.meta.projectEventsRead, 0);
+  assert.equal(usageProjectScopePayload.meta.eventsAnalyzed, 0);
+
   const usagePruneRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
     import { readFile, stat } from 'node:fs/promises';
     import { join } from 'node:path';
