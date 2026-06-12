@@ -144,13 +144,15 @@ export const tools = {
     {
       name: "context_search",
       description:
-        "Search local files with ripgrep and return bounded filename:line:match output. Uses system rg, OpenCode's cached rg, or Pi's cached rg when available.",
+        "Search local files with bounded text or optional ast-grep structural search results.",
       inputSchema: {
         type: "object",
         properties: {
+          engine: { type: "string", enum: ["text", "ast"], description: "Search engine. Default: text. Use ast for ast-grep structural patterns." },
           pattern: { type: "string", description: "Regex pattern to search for" },
           path: { type: "string", description: "File or directory to search. Default: ." },
           include: { type: "string", description: "File glob to include, for example *.js or *.{ts,tsx}" },
+          language: { type: "string", description: "ast-grep language, required when engine=ast, for example javascript, typescript, kotlin, rust." },
           contextLines: { type: "integer", minimum: 0, maximum: 10, description: "Lines before and after each match. Default: 0." },
           maxMatches: {
             type: "integer",

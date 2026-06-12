@@ -130,6 +130,23 @@ async function findRgForTest() {
   return null;
 }
 
+async function findAstGrepForTest() {
+  const names = process.platform === "win32" ? ["sg.exe", "ast-grep.exe"] : ["sg", "ast-grep"];
+  const entries = (process.env.PATH ?? process.env.Path ?? "").split(process.platform === "win32" ? ";" : ":").filter(Boolean);
+
+  for (const entry of entries) {
+    for (const name of names) {
+      const candidate = join(entry, name);
+      if (!await pathExists(candidate)) continue;
+      try {
+        const result = await runProcess(candidate, ["--version"], { timeout: 5_000 });
+        if (result.code === 0) return candidate;
+      } catch {}
+    }
+  }
+  return null;
+}
+
 async function hasGitForTest() {
   try {
     const result = await runProcess("git", ["--version"], { timeout: 5_000 });
@@ -694,6 +711,63 @@ try {
   assert.equal(missingRgPayload.ok, false);
   assert.equal(missingRgPayload.code, -32000);
   assert.match(missingRgPayload.message, /ripgrep was not found/);
+
+  const missingAstLanguage = await request("tools/call", {
+    name: "context_search",
+    arguments: { engine: "ast", pattern: "assert.equal($A, $B)", path: "smoke-test.js" },
+  });
+  assert.equal(missingAstLanguage.error.code, -32602);
+  assert.match(missingAstLanguage.error.message, /language is required/);
+
+  const astGrepPath = await findAstGrepForTest();
+  if (astGrepPath) {
+    const astSearch = await request("tools/call", {
+      name: "context_search",
+      arguments: { engine: "ast", pattern: "assert.equal($A, $B)", language: "javascript", path: "smoke-test.js", maxMatches: 5 },
+    });
+    assert.ok(astSearch.result, JSON.stringify(astSearch));
+    assert.equal(astSearch.result._meta.engine, "ast");
+    assert.equal(astSearch.result._meta.language, "javascript");
+    assert.equal(astSearch.result._meta.shownMatches, 5);
+    assert.match(astSearch.result.content[0].text, /smoke-test\.js:/);
+    assert.match(astSearch.result.content[0].text, /assert\.equal/);
+
+    const astNoMatches = await request("tools/call", {
+      name: "context_search",
+      arguments: { engine: "ast", pattern: "definitelyNoSuchCall($A)", language: "javascript", path: "smoke-test.js", maxMatches: 5 },
+    });
+    assert.equal(astNoMatches.result.content[0].text, "(no matches)");
+    assert.equal(astNoMatches.result._meta.engine, "ast");
+    assert.equal(astNoMatches.result._meta.shownMatches, 0);
+  }
+
+  const missingAstGrepRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
+    const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
+    let payload;
+    try {
+      await callTool('context_search', { engine: 'ast', pattern: 'foo($A)', language: 'javascript', path: '.' });
+      payload = { ok: true };
+    } catch (error) {
+      payload = { ok: false, code: error.code, message: error.message };
+    }
+    console.log(JSON.stringify(payload));
+  `], {
+    cwd: tempDir,
+    timeout: 5_000,
+    env: {
+      ...process.env,
+      PATH: "",
+      Path: "",
+      HOME: join(tempDir, "missing-ast-home"),
+      USERPROFILE: join(tempDir, "missing-ast-home"),
+      SIMPLE_CONTEXT_LIMITER_AST_GREP_PATH: "",
+    },
+  });
+  assert.equal(missingAstGrepRun.code, 0, missingAstGrepRun.stderr);
+  const missingAstPayload = JSON.parse(missingAstGrepRun.stdout.trim());
+  assert.equal(missingAstPayload.ok, false);
+  assert.equal(missingAstPayload.code, -32000);
+  assert.match(missingAstPayload.message, /ast-grep was not found/);
 
   const html = `<html><body>${Array.from({ length: 300 }, (_, i) => `<p>line ${i}</p>`).join("")}</body></html>`;
   const fetched = await request("tools/call", {

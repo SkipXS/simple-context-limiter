@@ -43,17 +43,46 @@ export async function findRg() {
   return null;
 }
 
+async function canRunAstGrep(candidate) {
+  const result = await runProcessLines(candidate, ["--version"], { timeout: 5_000, maxLines: 2, maxBytes: 4096 });
+  return result.code === 0;
+}
+
+export async function findAstGrep() {
+  const names = process.platform === "win32" ? ["sg.exe", "ast-grep.exe"] : ["sg", "ast-grep"];
+  const candidates = [];
+
+  if (process.env.SIMPLE_CONTEXT_LIMITER_AST_GREP_PATH) candidates.push(process.env.SIMPLE_CONTEXT_LIMITER_AST_GREP_PATH);
+  for (const entry of pathEntries()) {
+    for (const name of names) candidates.push(path.join(entry, name));
+  }
+
+  for (const candidate of candidates) {
+    if (!await isExecutable(candidate)) continue;
+    try {
+      if (await canRunAstGrep(candidate)) return candidate;
+    } catch {}
+  }
+
+  return null;
+}
+
 export async function searchTool(args) {
   const {
+    engine = "text",
     pattern,
     path: searchPath = ".",
     include,
+    language,
     contextLines = 0,
     maxMatches = 100,
     maxLines = MAX_LINES,
     maxBytes = MAX_BYTES,
   } = args ?? {};
 
+  if (engine !== "text" && engine !== "ast") {
+    invalidParams("context_search engine must be \"text\" or \"ast\"");
+  }
   if (typeof pattern !== "string" || pattern.trim() === "") {
     invalidParams("context_search requires a non-empty pattern string");
   }
@@ -63,10 +92,20 @@ export async function searchTool(args) {
   if (include !== undefined && typeof include !== "string") {
     invalidParams("context_search include must be a string when provided");
   }
+  if (language !== undefined && typeof language !== "string") {
+    invalidParams("context_search language must be a string when provided");
+  }
   const contextLimit = validateInteger(contextLines, "context_search contextLines", 0, 10);
   const limit = validateInteger(maxMatches, "context_search maxMatches", 1, 1000);
   const lineLimit = validateInteger(maxLines, "context_search maxLines", 10, 200);
   const byteLimit = validateInteger(maxBytes, "context_search maxBytes", 1024, MAX_BYTES);
+
+  if (engine === "ast") {
+    if (typeof language !== "string" || language.trim() === "") {
+      invalidParams("context_search language is required when engine is ast");
+    }
+    return await astSearchTool(pattern, searchPath, include, language, contextLimit, limit, lineLimit, byteLimit);
+  }
 
   const rg = await findRg();
   if (!rg) {
@@ -145,6 +184,86 @@ export async function searchTool(args) {
     content: [{ type: "text", text: formatted.text }],
     _meta: meta,
   };
+}
+
+async function astSearchTool(pattern, searchPath, include, language, contextLines, maxMatches, maxLines, maxBytes) {
+  const sg = await findAstGrep();
+  if (!sg) {
+    const error = new Error(
+      "ast-grep was not found. Install @ast-grep/cli, install sg/ast-grep on PATH, or set SIMPLE_CONTEXT_LIMITER_AST_GREP_PATH.",
+    );
+    error.code = -32000;
+    throw error;
+  }
+
+  const started = Date.now();
+  const sgArgs = ["run", "--pattern", pattern, "--lang", language, "--json=stream"];
+  if (contextLines > 0) sgArgs.push("--context", String(contextLines));
+  if (include) sgArgs.push("--globs", include);
+  sgArgs.push(searchPath);
+
+  const result = await runProcessLines(sg, sgArgs, {
+    cwd: process.cwd(),
+    timeout: 120_000,
+    maxLines: maxMatches + 1,
+    maxBytes: MAX_READ_BYTES,
+  });
+  if (result.code !== 0 && !result.truncated && !result.outputTooLarge) {
+    commandError(`ast-grep ${sgArgs.join(" ")}`, result.code, result.signal, result.stdout, result.stderr, result.timedOut, result.outputTooLarge);
+  }
+
+  const matches = result.lines.map(parseAstGrepLine).filter(Boolean);
+  const shown = matches.slice(0, maxMatches);
+  const matchLimited = result.truncated || result.outputTooLarge || matches.length > maxMatches;
+  const text = shown.length > 0
+    ? formatAstMatches(shown, matchLimited)
+    : "(no matches)";
+  const formatted = formatOutput(text, maxLines, maxBytes);
+  const meta = {
+    engine: "ast",
+    astGrepPath: sg,
+    language,
+    contextLines,
+    totalMatches: matchLimited ? undefined : matches.length,
+    totalMatchesKnown: !matchLimited,
+    matchesRead: matchLimited ? matches.length : undefined,
+    shownMatches: shown.length,
+    totalLines: formatted.totalLines,
+    totalBytes: formatted.totalBytes,
+    ...savingsMeta(formatted),
+    truncated: matchLimited || formatted.truncated,
+    durationMs: Date.now() - started,
+  };
+  await recordStats("context_search", meta);
+
+  return { content: [{ type: "text", text: formatted.text }], _meta: meta };
+}
+
+function parseAstGrepLine(line) {
+  try {
+    const parsed = JSON.parse(line);
+    if (!parsed || typeof parsed !== "object") return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+function formatAstMatches(matches, limited) {
+  const lines = matches.map((match) => {
+    const file = typeof match.file === "string" ? match.file : "(unknown file)";
+    const start = match.range?.start;
+    const line = Number.isInteger(start?.line) ? start.line : 0;
+    const column = Number.isInteger(start?.column) ? start.column : 0;
+    const text = typeof match.lines === "string"
+      ? match.lines.trim()
+      : typeof match.text === "string"
+        ? match.text.trim()
+        : "(match)";
+    return `${file}:${line}:${column}: ${text}`;
+  });
+  if (limited) lines.push("... more matches omitted ...");
+  return lines.join("\n");
 }
 
 async function searchWithContext(rg, pattern, searchPath, include, contextLines, maxMatches, maxLines, maxBytes) {

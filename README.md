@@ -9,7 +9,7 @@ A minimal MCP server that keeps large command, log, file, search, repo-discovery
 | `context_run` | Running shell commands when full stdout is not needed | `bash`, terminal, `tail -10000 log.txt` |
 | `context_logs` | Extracting relevant errors from tests, builds, lints, and logs | raw test/build output, full server logs |
 | `context_read` | Reading one or more local UTF-8 text files safely | `cat huge.log`, `type huge.log`, repeated file reads |
-| `context_search` | Searching local files with bounded ripgrep output and optional context | raw `rg` / `grep` commands |
+| `context_search` | Searching local files with bounded ripgrep output or optional ast-grep structural search | raw `rg` / `grep` / `sg` commands |
 | `context_discover` | Repo summaries, file lists, trees, and source outlines | broad globs, recursive trees, several setup reads |
 | `context_fetch` | Fetching web pages as readable text | `webfetch`, raw HTML downloads |
 | `context_diff` | Reviewing compact Git diffs or changed-file status | raw `git diff` / `git status` output |
@@ -82,7 +82,7 @@ The tool accepts at most 20 paths. Each file uses the same preview behavior as s
 
 ### `context_search`
 
-Searches local files with ripgrep and returns bounded `file:line:match` output. Pass `contextLines` when you need small surrounding context windows. Override with `maxMatches`, `maxLines`, or `maxBytes` per call.
+Searches local files with ripgrep by default and returns bounded `file:line:match` output. Pass `contextLines` when you need small surrounding context windows. Override with `maxMatches`, `maxLines`, or `maxBytes` per call.
 Relative search paths are resolved from the MCP server's `process.cwd()`.
 
 ```json
@@ -97,6 +97,23 @@ simple-context-limiter does not download ripgrep. It uses the first available bi
 - Pi cache: `~/.pi/agent/bin/rg` or `rg.exe`
 
 If none is found, `context_search` returns a clear error. The other tools do not need ripgrep.
+
+Structural search is available when the ast-grep CLI is installed. It is optional and not bundled:
+
+```json
+{ "engine": "ast", "pattern": "assert.equal($A, $B)", "language": "javascript", "path": "smoke-test.js", "maxMatches": 20 }
+```
+
+Install ast-grep with one of:
+
+```bash
+npm install -g @ast-grep/cli
+brew install ast-grep
+cargo install ast-grep --locked
+pip install ast-grep-cli
+```
+
+simple-context-limiter discovers `sg` or `ast-grep` on `PATH`, or use `SIMPLE_CONTEXT_LIMITER_AST_GREP_PATH` to point at the binary. It intentionally does not run `npx`.
 
 ### `context_discover`
 
@@ -326,6 +343,7 @@ For Pi:
 |---|---:|---|
 | `SIMPLE_CONTEXT_LIMITER_SHELL` | Node platform default | Shell used by `context_run` |
 | `SIMPLE_CONTEXT_LIMITER_RG_PATH` | auto-detect | Explicit path to `rg` / `rg.exe` for `context_search` |
+| `SIMPLE_CONTEXT_LIMITER_AST_GREP_PATH` | auto-detect | Explicit path to `sg` / `ast-grep` for `context_search` with `engine: "ast"` |
 | `SIMPLE_CONTEXT_LIMITER_MAX_COMMAND_BYTES` | `10485760` | Max command output bytes collected before stopping the process |
 | `SIMPLE_CONTEXT_LIMITER_MAX_FETCH_BYTES` | `10485760` | Max downloaded bytes before parsing/caching |
 | `SIMPLE_CONTEXT_LIMITER_MAX_READ_BYTES` | `10485760` | Max file bytes read before previewing |
