@@ -364,6 +364,9 @@ For Pi:
 | `SIMPLE_CONTEXT_LIMITER_MAX_COMMAND_BYTES` | `10485760` | Max command output bytes collected before stopping the process |
 | `SIMPLE_CONTEXT_LIMITER_MAX_FETCH_BYTES` | `10485760` | Max downloaded bytes before parsing/caching |
 | `SIMPLE_CONTEXT_LIMITER_MAX_READ_BYTES` | `10485760` | Max file bytes read before previewing |
+| `SIMPLE_CONTEXT_LIMITER_MAX_RPC_LINE_BYTES` | `1048576` | Max JSON-RPC input line bytes accepted before rejecting the request |
+| `SIMPLE_CONTEXT_LIMITER_MAX_RPC_BATCH_SIZE` | `50` | Max JSON-RPC requests accepted in one batch |
+| `SIMPLE_CONTEXT_LIMITER_MAX_RPC_BATCH_CONCURRENCY` | `4` | Max JSON-RPC batch items processed concurrently |
 | `SIMPLE_CONTEXT_LIMITER_READ_RANGE_TIMEOUT_MS` | `120000` | Max time spent scanning for a requested line range |
 | `SIMPLE_CONTEXT_LIMITER_CACHE_MAX_ENTRIES` | `200` | Max cached fetch entries kept on disk |
 | `SIMPLE_CONTEXT_LIMITER_CACHE_MAX_BYTES` | `52428800` | Max cached fetch content bytes kept on disk |
@@ -375,6 +378,8 @@ For Pi:
 ## Security / Trust Model
 
 simple-context-limiter intentionally gives trusted agents local capabilities: `run` executes shell commands, `read` and `search` can access local paths visible to the MCP server process, and `fetch` can reach HTTP services available from that machine. Only enable it for clients and agents you trust with that access. Output, downloads, and previews are size-limited to protect model context, not to sandbox the underlying operation.
+
+The missing boundaries around `fetch` to private/internal networks, `read` access outside the current project, and free-form shell execution in `run`/`logs` are by design for this tool. If you need those restrictions, run simple-context-limiter only in a sandboxed environment or add policy controls in the MCP client/runtime that starts it.
 
 ## Cache
 

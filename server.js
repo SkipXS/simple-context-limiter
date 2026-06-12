@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
-import { createInterface } from "node:readline";
-import { SERVER_NAME, SERVER_VERSION } from "./src/constants.js";
+import { MAX_RPC_BATCH_CONCURRENCY, MAX_RPC_BATCH_SIZE, MAX_RPC_LINE_BYTES, SERVER_NAME, SERVER_VERSION } from "./src/constants.js";
 import { tools, callTool } from "./src/tools.js";
 import { commandErrorData, errorData } from "./src/process.js";
 
@@ -107,8 +106,6 @@ const instructions = "Default to run, logs, read, search, discover, fetch, diff,
   + "Use native shell/read/fetch/diff tools only when you specifically need complete output, exact stderr/exit behavior, interactivity, or unsupported behavior. "
   + "Read the _meta field after each call: if truncated is true, retry with a narrower query/range or higher maxLines/maxBytes before falling back to native tools.";
 
-const rl = createInterface({ input: process.stdin });
-
 async function handleMessage(msg) {
   if (!isRequestObject(msg)) return errorResponse(null, -32600, "Invalid Request");
 
@@ -153,7 +150,23 @@ async function handleMessage(msg) {
   }
 }
 
-rl.on("line", async (line) => {
+async function mapLimited(items, limit, mapper) {
+  const results = new Array(items.length);
+  let next = 0;
+
+  async function worker() {
+    for (;;) {
+      const index = next++;
+      if (index >= items.length) return;
+      results[index] = await mapper(items[index]);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+async function handleLine(line) {
   try {
     let msg;
     try {
@@ -168,8 +181,12 @@ rl.on("line", async (line) => {
         sendError(null, -32600, "Invalid Request");
         return;
       }
+      if (msg.length > MAX_RPC_BATCH_SIZE) {
+        sendError(null, -32600, `Batch size exceeds ${MAX_RPC_BATCH_SIZE}`);
+        return;
+      }
 
-      const responses = (await Promise.all(msg.map(handleMessage))).filter(Boolean);
+      const responses = (await mapLimited(msg, MAX_RPC_BATCH_CONCURRENCY, handleMessage)).filter(Boolean);
       if (responses.length > 0) send(responses);
       return;
     }
@@ -179,6 +196,56 @@ rl.on("line", async (line) => {
   } catch (e) {
     sendError(null, rpcCode(e), e.message);
   }
+}
+
+let lineChunks = [];
+let lineBytes = 0;
+let discardingLine = false;
+
+function resetLine() {
+  lineChunks = [];
+  lineBytes = 0;
+}
+
+function appendLinePart(part) {
+  if (discardingLine || part.byteLength === 0) return;
+  if (lineBytes + part.byteLength > MAX_RPC_LINE_BYTES) {
+    resetLine();
+    discardingLine = true;
+    return;
+  }
+
+  lineChunks.push(part);
+  lineBytes += part.byteLength;
+}
+
+function finishLine() {
+  if (discardingLine) {
+    sendError(null, -32600, `Request line exceeds ${MAX_RPC_LINE_BYTES} bytes`);
+    discardingLine = false;
+    return;
+  }
+
+  const line = Buffer.concat(lineChunks, lineBytes).toString("utf8").replace(/\r$/, "");
+  resetLine();
+  void handleLine(line);
+}
+
+process.stdin.on("data", (chunk) => {
+  let offset = 0;
+
+  for (;;) {
+    const newline = chunk.indexOf(0x0a, offset);
+    const end = newline === -1 ? chunk.length : newline;
+    appendLinePart(chunk.subarray(offset, end));
+    if (newline === -1) return;
+    finishLine();
+    offset = newline + 1;
+  }
+});
+
+process.stdin.on("end", () => {
+  if (lineBytes > 0 || discardingLine) finishLine();
 });
 
 process.stderr.write(`[${SERVER_NAME} v${SERVER_VERSION}] ready (stdio)\n`);

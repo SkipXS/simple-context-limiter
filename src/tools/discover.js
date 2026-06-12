@@ -1,8 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { MAX_BYTES, MAX_LINES, MAX_READ_BYTES } from "../constants.js";
-import { formatOutput } from "../output.js";
-import { runProcess } from "../process.js";
+import { decodeUtf8, formatOutput } from "../output.js";
+import { runProcess, runProcessLines } from "../process.js";
 import { recordStats } from "../stats.js";
 import { invalidParams, savingsMeta, validateInteger } from "./shared.js";
 
@@ -62,8 +62,21 @@ async function filesMode(args) {
 
 async function listFiles(inputPath, matcher, maxFiles) {
   try {
-    const git = await runProcess("git", ["ls-files", "--", inputPath], { cwd: process.cwd(), timeout: 30_000 });
-    if (git.code === 0) return { files: git.stdout.split("\n").filter(Boolean), limited: false };
+    if (!matcher) {
+      const git = await runProcessLines("git", ["ls-files", "--", inputPath], {
+        cwd: process.cwd(),
+        timeout: 30_000,
+        maxLines: maxFiles + 1,
+        maxBytes: MAX_READ_BYTES,
+      });
+      if (git.code === 0) {
+        const limited = git.truncated || git.outputTooLarge || git.lines.length > maxFiles;
+        return { files: git.lines.slice(0, maxFiles), limited };
+      }
+    } else {
+      const git = await runProcess("git", ["ls-files", "--", inputPath], { cwd: process.cwd(), timeout: 30_000 });
+      if (git.code === 0) return { files: git.stdout.split("\n").filter(Boolean), limited: false };
+    }
   } catch {}
 
   const root = process.cwd();
@@ -195,8 +208,8 @@ async function summaryMode(args) {
     lines.push(`Dependencies: ${Object.keys(packageJson.dependencies ?? {}).length} runtime, ${Object.keys(packageJson.devDependencies ?? {}).length} dev`);
   }
 
-  const readme = await readTextIfExists(path.join(root, "README.md"));
-  if (readme) lines.push("", "README preview:", ...readme.split("\n").slice(0, 8));
+  const readmeLines = await readFirstLinesIfExists(path.join(root, "README.md"), 8);
+  if (readmeLines.length > 0) lines.push("", "README preview:", ...readmeLines);
 
   const configs = ["package.json", "tsconfig.json", "vite.config.js", "eslint.config.js", ".gitignore", "opencode.json", "opencode.jsonc"]
     .filter((name) => fs.existsSync(path.join(root, name)));
@@ -214,8 +227,18 @@ async function summaryMode(args) {
   return { content: [{ type: "text", text: formatted.text }], _meta: meta };
 }
 
-async function readTextIfExists(filePath) {
-  try { return await fs.promises.readFile(filePath, "utf8"); } catch { return undefined; }
+async function readFirstLinesIfExists(filePath, maxLines) {
+  let file;
+  try {
+    file = await fs.promises.open(filePath, "r");
+    const buffer = Buffer.alloc(Math.min(MAX_READ_BYTES, 16 * 1024));
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+    return decodeUtf8(buffer.subarray(0, bytesRead), { trimEnd: true }).split(/\r?\n/).slice(0, maxLines);
+  } catch {
+    return [];
+  } finally {
+    await file?.close().catch(() => {});
+  }
 }
 
 async function readJsonIfExists(filePath) {

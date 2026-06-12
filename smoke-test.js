@@ -19,6 +19,9 @@ const child = spawn(process.execPath, ["server.js"], {
     SIMPLE_CONTEXT_LIMITER_ALLOW_NON_HTTP_FETCH: "1",
     SIMPLE_CONTEXT_LIMITER_MAX_FETCH_BYTES: "1024",
     SIMPLE_CONTEXT_LIMITER_MAX_READ_BYTES: "2048",
+    SIMPLE_CONTEXT_LIMITER_MAX_RPC_BATCH_CONCURRENCY: "2",
+    SIMPLE_CONTEXT_LIMITER_MAX_RPC_BATCH_SIZE: "4",
+    SIMPLE_CONTEXT_LIMITER_MAX_RPC_LINE_BYTES: "65536",
     SIMPLE_CONTEXT_LIMITER_USAGE_LOG: "0",
   },
   stdio: ["pipe", "pipe", "pipe"],
@@ -269,6 +272,11 @@ try {
   assert.equal(invalidRequestId.id, null);
   assert.equal(invalidRequestId.error.code, -32600);
 
+  const oversizedLine = await rawRequest({ jsonrpc: "2.0", id: "too-large", method: "x".repeat(70000) });
+  assert.equal(oversizedLine.id, null);
+  assert.equal(oversizedLine.error.code, -32600);
+  assert.match(oversizedLine.error.message, /Request line exceeds/);
+
   const emptyBatch = await rawRequest([]);
   assert.equal(emptyBatch.id, null);
   assert.equal(emptyBatch.error.code, -32600);
@@ -284,6 +292,15 @@ try {
   assert.equal(batch.find((response) => response.id === "list").result.tools.length, 8);
   assert.equal(batch.find((response) => response.id === null).error.code, -32600);
   assert.equal(batch.find((response) => response.id === "missing").error.code, -32601);
+
+  const oversizedBatch = await rawRequest(Array.from({ length: 5 }, (_, index) => ({
+    jsonrpc: "2.0",
+    id: `batch-${index}`,
+    method: "tools/list",
+  })));
+  assert.equal(oversizedBatch.id, null);
+  assert.equal(oversizedBatch.error.code, -32600);
+  assert.match(oversizedBatch.error.message, /Batch size exceeds 4/);
 
   const listed = await request("tools/list", {});
   assert.deepEqual(listed.result.tools.map((tool) => tool.name), [
