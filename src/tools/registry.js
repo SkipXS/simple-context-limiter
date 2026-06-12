@@ -145,7 +145,6 @@ export const tools = {
             description: "For paths: max combined response lines. Default: 200.",
           },
         },
-        anyOf: [{ required: ["path"] }, { required: ["paths"] }],
       },
     },
     {

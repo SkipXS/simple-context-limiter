@@ -277,7 +277,9 @@ try {
   ]);
   assert.equal(listed.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
   const readSchema = listed.result.tools.find((tool) => tool.name === "context_read").inputSchema;
-  assert.deepEqual(readSchema.anyOf, [{ required: ["path"] }, { required: ["paths"] }]);
+  assert.equal(readSchema.type, "object");
+  assert.equal(readSchema.anyOf, undefined);
+  assert.match(readSchema.properties.paths.description, /path is also provided/);
 
   const unknownTool = await request("tools/call", {
     name: "context_missing",
