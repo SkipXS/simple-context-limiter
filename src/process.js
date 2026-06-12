@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
-import { COMMAND_SHELL, MAX_COMMAND_BYTES } from "./constants.js";
+import { COMMAND_SHELL, DEFAULT_COMMAND_TIMEOUT_MS, MAX_COMMAND_BYTES } from "./constants.js";
 import { formatOutput } from "./output.js";
 
 function terminateChild(child) {
@@ -52,7 +52,7 @@ export function commandErrorData(error) {
   return Object.keys(data).length > 0 ? data : undefined;
 }
 
-export function commandError(command, code, signal, stdout, stderr, timedOut = false, outputTooLarge = false, timeoutMs = 120_000) {
+export function commandError(command, code, signal, stdout, stderr, timedOut = false, outputTooLarge = false, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS) {
   const detail = outputTooLarge
     ? `output exceeded ${MAX_COMMAND_BYTES} bytes`
     : timedOut
@@ -156,7 +156,7 @@ export async function runProcess(file, args, options = {}) {
   });
 }
 
-export async function runCommandResult(command) {
+export async function runCommandResult(command, options = {}) {
   return await new Promise((resolve, reject) => {
     const started = Date.now();
     const child = spawn(command, {
@@ -172,10 +172,11 @@ export async function runCommandResult(command) {
     let timedOut = false;
     const outputTooLarge = collectOutput(child, stdout, stderr, output);
 
+    const timeoutMs = options.timeout ?? DEFAULT_COMMAND_TIMEOUT_MS;
     const timer = setTimeout(() => {
       timedOut = true;
       terminateChild(child);
-    }, 120_000);
+    }, timeoutMs);
 
     child.on("error", (error) => {
       clearTimeout(timer);
@@ -192,6 +193,7 @@ export async function runCommandResult(command) {
         stderr: stderrText,
         output: Buffer.concat(output).toString("utf8"),
         durationMs: Date.now() - started,
+        timeoutMs,
         timedOut,
         outputTooLarge: outputTooLarge(),
       });
@@ -199,13 +201,13 @@ export async function runCommandResult(command) {
   });
 }
 
-export async function runCommand(command) {
-  const result = await runCommandResult(command);
+export async function runCommand(command, options = {}) {
+  const result = await runCommandResult(command, options);
   if (result.code === 0 && !result.signal && !result.timedOut) {
-    return { stdout: result.stdout, durationMs: result.durationMs, outputTooLarge: result.outputTooLarge };
+    return { stdout: result.stdout, durationMs: result.durationMs, timeoutMs: result.timeoutMs, outputTooLarge: result.outputTooLarge };
   }
 
-  commandError(command, result.code, result.signal, result.stdout, result.stderr, result.timedOut, result.outputTooLarge, 120_000);
+  commandError(command, result.code, result.signal, result.stdout, result.stderr, result.timedOut, result.outputTooLarge, result.timeoutMs);
 }
 
 export async function runProcessLines(file, args, options = {}) {

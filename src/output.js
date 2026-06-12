@@ -3,7 +3,7 @@ import { MAX_BYTES, MAX_LINES } from "./constants.js";
 export function normalizeMaxLines(maxLines = MAX_LINES) {
   const numeric = Number(maxLines);
   const value = Number.isFinite(numeric) ? Math.trunc(numeric) : MAX_LINES;
-  return Math.max(10, Math.min(value, 200));
+  return Math.max(10, Math.min(value, 500));
 }
 
 export function normalizeMaxBytes(maxBytes = MAX_BYTES) {

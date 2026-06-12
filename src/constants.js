@@ -7,6 +7,9 @@ export const SERVER_VERSION = JSON.parse(fs.readFileSync(new URL("../package.jso
 
 export const MAX_LINES = 60;
 export const MAX_BYTES = 32 * 1024;
+export const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
+export const MIN_COMMAND_TIMEOUT_MS = 100;
+export const MAX_COMMAND_TIMEOUT_MS = 30 * 60_000;
 export const MAX_COMMAND_BYTES = normalizeByteLimit(process.env.SIMPLE_CONTEXT_LIMITER_MAX_COMMAND_BYTES, 10 * 1024 * 1024);
 export const MAX_FETCH_BYTES = normalizeByteLimit(process.env.SIMPLE_CONTEXT_LIMITER_MAX_FETCH_BYTES, 10 * 1024 * 1024);
 export const MAX_READ_BYTES = normalizeByteLimit(process.env.SIMPLE_CONTEXT_LIMITER_MAX_READ_BYTES, 10 * 1024 * 1024);

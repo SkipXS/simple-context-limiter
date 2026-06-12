@@ -166,10 +166,12 @@ try {
   tempDir = await mkdtemp(join(tmpdir(), "simple-context-limiter-test-"));
   const largeFile = join(tempDir, "large.txt");
   const largeOneLineFile = join(tempDir, "large-one-line.txt");
+  const manyShortLinesFile = join(tempDir, "many-short-lines.txt");
   const hugeRangeFile = join(tempDir, "huge-range.txt");
   const dashFile = join(tempDir, "dash.txt");
   await writeFile(largeFile, Array.from({ length: 300 }, (_, i) => `file line ${i}`).join("\n"), "utf8");
   await writeFile(largeOneLineFile, "🙂".repeat(2048), "utf8");
+  await writeFile(manyShortLinesFile, Array.from({ length: 300 }, () => "x").join("\n"), "utf8");
   await writeFile(hugeRangeFile, `${"x".repeat(4096)}\nsmall\n`, "utf8");
   await writeFile(dashFile, "-needle\nplain\n", "utf8");
 
@@ -283,6 +285,7 @@ try {
   assert.equal(ok.result._meta.truncated, false);
   assertSavingsMeta(ok.result._meta);
   assert.equal(typeof ok.result._meta.durationMs, "number");
+  assert.equal(ok.result._meta.timeoutMs, 120_000);
   assert.equal(typeof ok.result._meta.shell, "string");
 
   const stdoutWithStderr = await request("tools/call", {
@@ -347,6 +350,25 @@ try {
   assert.equal(invalidRunMaxBytes.error.code, -32602);
   assert.match(invalidRunMaxBytes.error.message, /maxBytes must be an integer/);
 
+  const invalidRunTimeout = await request("tools/call", {
+    name: "context_run",
+    arguments: { command: "noop", timeoutMs: 99 },
+  });
+  assert.equal(invalidRunTimeout.error.code, -32602);
+  assert.match(invalidRunTimeout.error.message, /timeoutMs must be between 100 and 1800000/);
+
+  const timedOutRun = await request("tools/call", {
+    name: "context_run",
+    arguments: {
+      command: isPowerShellConfigured()
+        ? `& ${shellQuote(process.execPath)} -e "setTimeout(() => {}, 1000)"`
+        : `${shellQuote(process.execPath)} -e "setTimeout(() => {}, 1000)"`,
+      timeoutMs: 100,
+    },
+  });
+  assert.equal(timedOutRun.error.code, -32000);
+  assert.match(timedOutRun.error.message, /timed out after 100ms/);
+
   const logsCommand = isPowerShellConfigured()
     ? `& ${shellQuote(process.execPath)} -e "for (let i = 0; i < 40; i++) console.log('line ' + i); console.error('AssertionError: expected true'); console.error('    at test.js:10:5'); process.exit(7)"`
     : `${shellQuote(process.execPath)} -e "for (let i = 0; i < 40; i++) console.log('line ' + i); console.error('AssertionError: expected true'); console.error('    at test.js:10:5'); process.exit(7)"`;
@@ -360,6 +382,7 @@ try {
   assert.equal(logs.result._meta.blocksShown, 1);
   assert.equal(logs.result._meta.fallback, false);
   assert.equal(logs.result._meta.shell, COMMAND_SHELL_NAME);
+  assert.equal(logs.result._meta.timeoutMs, 120_000);
   assert.match(logs.result.content[0].text, /Command exit 7/);
   assert.match(logs.result.content[0].text, /AssertionError/);
   assert.match(logs.result.content[0].text, /at test\.js:10:5/);
@@ -400,6 +423,21 @@ try {
   });
   assert.equal(invalidLogsMaxBlocks.error.code, -32602);
   assert.match(invalidLogsMaxBlocks.error.message, /maxBlocks must be between 1 and 50/);
+
+  const timedOutLogs = await request("tools/call", {
+    name: "context_logs",
+    arguments: {
+      command: isPowerShellConfigured()
+        ? `& ${shellQuote(process.execPath)} -e "setTimeout(() => {}, 1000)"`
+        : `${shellQuote(process.execPath)} -e "setTimeout(() => {}, 1000)"`,
+      timeoutMs: 100,
+      maxBytes: 4096,
+    },
+  });
+  assert.ok(timedOutLogs.result, JSON.stringify(timedOutLogs));
+  assert.equal(timedOutLogs.result._meta.timedOut, true);
+  assert.equal(timedOutLogs.result._meta.timeoutMs, 100);
+  assert.match(timedOutLogs.result.content[0].text, /Command timed out/);
 
   if (configuredShell().includes("bash")) {
     const bashOnly = await request("tools/call", {
@@ -534,12 +572,25 @@ try {
   assert.equal(invalidRangeTypeRead.error.code, -32602);
   assert.match(invalidRangeTypeRead.error.message, /fromLine must be an integer/);
 
+  const largerRangeRead = await request("tools/call", {
+    name: "context_read",
+    arguments: { path: manyShortLinesFile, fromLine: 1, toLine: 300, maxLines: 500 },
+  });
+  assert.equal(largerRangeRead.result._meta.truncated, false);
+  assert.equal(largerRangeRead.result._meta.returnedLines, 300);
+
   const invalidReadMaxLines = await request("tools/call", {
     name: "context_read",
     arguments: { path: largeFile, maxLines: 201 },
   });
-  assert.equal(invalidReadMaxLines.error.code, -32602);
-  assert.match(invalidReadMaxLines.error.message, /maxLines must be between 10 and 200/);
+  assert.ok(invalidReadMaxLines.result, JSON.stringify(invalidReadMaxLines));
+
+  const invalidReadMaxLinesTooHigh = await request("tools/call", {
+    name: "context_read",
+    arguments: { path: largeFile, maxLines: 501 },
+  });
+  assert.equal(invalidReadMaxLinesTooHigh.error.code, -32602);
+  assert.match(invalidReadMaxLinesTooHigh.error.message, /maxLines must be between 10 and 500/);
 
   const invalidReadMaxBytes = await request("tools/call", {
     name: "context_read",

@@ -21,7 +21,7 @@ Runs a shell command and returns stdout. Output is automatically truncated when 
 Commands that exit successfully but write diagnostics to stderr will not include stderr in `context_run`; use `context_logs` when stderr or mixed command output matters.
 
 ```json
-{ "command": "find . -name '*.ts'", "maxLines": 100, "maxBytes": 16384 }
+{ "command": "find . -name '*.ts'", "maxLines": 100, "maxBytes": 16384, "timeoutMs": 120000 }
 ```
 
 Response `_meta` includes:
@@ -32,25 +32,26 @@ Response `_meta` includes:
   "totalBytes": 48000,
   "truncated": true,
   "durationMs": 230,
+  "timeoutMs": 120000,
   "shell": "bash"
 }
 ```
 
-Command output collection is capped at 10 MB by default before formatting. Override with `SIMPLE_CONTEXT_LIMITER_MAX_COMMAND_BYTES` if needed.
+Command output collection is capped at 10 MB by default before formatting. Override with `SIMPLE_CONTEXT_LIMITER_MAX_COMMAND_BYTES` if needed. Command timeout defaults to 120 seconds and can be set per call with `timeoutMs` from 100ms to 30 minutes.
 
 ### `context_logs`
 
 Runs a shell command and extracts relevant error or warning blocks with surrounding context. Use it for tests, builds, lints, compiler output, server logs, and CI-style output where the important lines may appear in the middle.
 
 ```json
-{ "command": "npm test", "maxBlocks": 10, "contextLines": 5, "maxBytes": 16384 }
+{ "command": "npm test", "maxBlocks": 10, "contextLines": 5, "maxBytes": 16384, "timeoutMs": 600000 }
 ```
 
 Unlike `context_run`, non-zero exits return a normal tool response with `exitCode`, `durationMs`, `blocksFound`, and savings metadata in `_meta`. If no error-like patterns are found, `context_logs` returns a compact tail fallback.
 
 ### `context_read`
 
-Reads local UTF-8 text files and returns safe previews. Use `path` for one file or `paths` for up to 20 files. Output is automatically truncated when it exceeds 60 lines or 32 KB. Override with `maxLines` or `maxBytes` per call.
+Reads local UTF-8 text files and returns safe previews. Use `path` for one file or `paths` for up to 20 files. Output is automatically truncated when it exceeds 60 lines or 32 KB. Override with `maxLines` or `maxBytes` per call. `context_read` allows up to 500 lines for targeted single-file ranges while keeping the 32 KB response cap.
 
 ```json
 { "path": "logs/app.log", "maxLines": 100, "maxBytes": 16384 }
@@ -60,6 +61,12 @@ Read a specific 1-based line range after a search result:
 
 ```json
 { "path": "logs/app.log", "fromLine": 28470, "toLine": 28520, "maxLines": 100, "maxBytes": 16384 }
+```
+
+For larger targeted source sections, raise `maxLines` up to 500 while keeping `fromLine` and `toLine` narrow enough to stay useful:
+
+```json
+{ "path": "src/large-module.ts", "fromLine": 1200, "toLine": 1650, "maxLines": 500, "maxBytes": 32768 }
 ```
 
 File reads are capped at 10 MB by default before formatting. Override with `SIMPLE_CONTEXT_LIMITER_MAX_READ_BYTES` if needed.
@@ -319,6 +326,7 @@ For Pi:
 |---|---:|---|
 | `SIMPLE_CONTEXT_LIMITER_SHELL` | Node platform default | Shell used by `context_run` |
 | `SIMPLE_CONTEXT_LIMITER_RG_PATH` | auto-detect | Explicit path to `rg` / `rg.exe` for `context_search` |
+| `SIMPLE_CONTEXT_LIMITER_MAX_COMMAND_BYTES` | `10485760` | Max command output bytes collected before stopping the process |
 | `SIMPLE_CONTEXT_LIMITER_MAX_FETCH_BYTES` | `10485760` | Max downloaded bytes before parsing/caching |
 | `SIMPLE_CONTEXT_LIMITER_MAX_READ_BYTES` | `10485760` | Max file bytes read before previewing |
 | `SIMPLE_CONTEXT_LIMITER_READ_RANGE_TIMEOUT_MS` | `120000` | Max time spent scanning for a requested line range |

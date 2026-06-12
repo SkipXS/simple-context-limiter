@@ -31,6 +31,12 @@ export const tools = {
             maximum: MAX_BYTES,
             description: "Max output bytes before head+tail truncation. Default: 32768.",
           },
+          timeoutMs: {
+            type: "integer",
+            minimum: 100,
+            maximum: 1800000,
+            description: "Command timeout in milliseconds. Default: 120000.",
+          },
         },
         required: ["command"],
       },
@@ -67,6 +73,12 @@ export const tools = {
             maximum: MAX_BYTES,
             description: "Max output bytes before head+tail truncation. Default: 32768.",
           },
+          timeoutMs: {
+            type: "integer",
+            minimum: 100,
+            maximum: 1800000,
+            description: "Command timeout in milliseconds. Default: 120000.",
+          },
         },
         required: ["command"],
       },
@@ -89,8 +101,8 @@ export const tools = {
           maxLines: {
             type: "integer",
             minimum: 10,
-            maximum: 200,
-            description: "Max lines before truncation. Default: 60.",
+            maximum: 500,
+            description: "Max lines before truncation. Default: 60. context_read allows up to 500 for targeted file ranges.",
           },
           maxBytes: {
             type: "integer",
@@ -111,7 +123,7 @@ export const tools = {
           maxLinesPerFile: {
             type: "integer",
             minimum: 10,
-            maximum: 200,
+            maximum: 500,
             description: "For paths: max lines per file. Default: 60.",
           },
           maxBytesPerFile: {

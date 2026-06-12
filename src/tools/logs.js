@@ -1,4 +1,4 @@
-import { COMMAND_SHELL_NAME, MAX_BYTES } from "../constants.js";
+import { COMMAND_SHELL_NAME, DEFAULT_COMMAND_TIMEOUT_MS, MAX_BYTES, MAX_COMMAND_TIMEOUT_MS, MIN_COMMAND_TIMEOUT_MS } from "../constants.js";
 import { formatOutput } from "../output.js";
 import { runCommandResult } from "../process.js";
 import { recordStats } from "../stats.js";
@@ -15,6 +15,7 @@ export async function logsResult(args, toolName) {
     contextLines = 5,
     maxLines = 120,
     maxBytes = MAX_BYTES,
+    timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
   } = args ?? {};
 
   if (typeof command !== "string" || command.trim() === "") {
@@ -25,8 +26,9 @@ export async function logsResult(args, toolName) {
   const contextLimit = validateInteger(contextLines, `${toolName} contextLines`, 0, 20);
   const lineLimit = validateInteger(maxLines, `${toolName} maxLines`, 10, 200);
   const byteLimit = validateInteger(maxBytes, `${toolName} maxBytes`, 1024, MAX_BYTES);
+  const timeoutLimit = validateInteger(timeoutMs, `${toolName} timeoutMs`, MIN_COMMAND_TIMEOUT_MS, MAX_COMMAND_TIMEOUT_MS);
 
-  const result = await runCommandResult(command);
+  const result = await runCommandResult(command, { timeout: timeoutLimit });
   const outputText = combinedCommandOutput(result);
   const extraction = extractLogBlocks(outputText, blockLimit, contextLimit, lineLimit);
   const statusLine = commandStatusLine(result);
@@ -44,6 +46,7 @@ export async function logsResult(args, toolName) {
     timedOut: result.timedOut,
     outputTooLarge: result.outputTooLarge,
     durationMs: result.durationMs,
+    timeoutMs: result.timeoutMs,
     shell: COMMAND_SHELL_NAME,
     blocksFound: extraction.blocksFound,
     blocksShown: extraction.blocksShown,

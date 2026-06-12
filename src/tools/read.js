@@ -24,7 +24,7 @@ export async function readManyTool(args, toolName = "context_read") {
     invalidParams(`${toolName} paths must contain at most 20 files`);
   }
 
-  const lineLimit = validateInteger(maxLinesPerFile, `${toolName} maxLinesPerFile`, 10, 200);
+  const lineLimit = validateInteger(maxLinesPerFile, `${toolName} maxLinesPerFile`, 10, 500);
   const byteLimit = validateInteger(maxBytesPerFile, `${toolName} maxBytesPerFile`, 1024, MAX_BYTES);
   const totalLimit = validateInteger(maxTotalBytes, `${toolName} maxTotalBytes`, 1024, MAX_BYTES);
   const results = [];
@@ -72,7 +72,7 @@ async function readFilePreview(args, toolName) {
   if (typeof filePath !== "string" || filePath.trim() === "") {
     invalidParams(`${toolName} requires a non-empty path string`);
   }
-  const lineLimit = validateInteger(maxLines, `${toolName} maxLines`, 10, 200);
+  const lineLimit = validateInteger(maxLines, `${toolName} maxLines`, 10, 500);
   const byteLimit = validateInteger(maxBytes, `${toolName} maxBytes`, 1024, MAX_BYTES);
 
   const resolved = path.resolve(filePath);
