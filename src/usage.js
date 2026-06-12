@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { usageLogEnabled, USAGE_LOG_FILE, USAGE_LOG_MAX_BYTES } from "./constants.js";
+import { projectKey, usageLogEnabled, USAGE_LOG_FILE, USAGE_LOG_MAX_BYTES } from "./constants.js";
 import { withFileLock } from "./storage.js";
 
 const MAX_REPORT_EVENTS = 10_000;
@@ -8,11 +8,13 @@ const REPORT_READ_BYTES = 5 * 1024 * 1024;
 
 export async function recordUsage(toolName, args, result, error, durationMs) {
   if (!usageLogEnabled()) return;
+  const project = projectKey();
+  if (!project) return;
 
   const meta = result?._meta ?? {};
   const event = {
     ts: Date.now(),
-    project: process.cwd(),
+    project,
     tool: toolName,
     durationMs,
     ok: !error,
@@ -67,7 +69,15 @@ function completeJsonLines(text) {
 export async function usageReport({ maxEvents = 1000 } = {}) {
   const eventLimit = normalizeEventLimit(maxEvents);
   const entries = await readUsageEntries(eventLimit);
-  const project = process.cwd();
+  const project = projectKey();
+  if (!project) {
+    const report = summarizeUsage([], process.cwd(), entries.length, 0);
+    report.ignoredProject = true;
+    return {
+      text: formatUsageReport(report),
+      meta: report,
+    };
+  }
   const projectEntries = entries.filter((entry) => entry.project === project);
   const sourceEntries = projectEntries.length > 0 ? projectEntries : entries;
   const report = summarizeUsage(sourceEntries, project, entries.length, projectEntries.length);
@@ -210,11 +220,13 @@ function addRecommendation(recommendations, summary, toolName, reason) {
 
 function formatUsageReport(report) {
   if (report.eventsAnalyzed === 0) {
-    return [
+    const lines = [
       `Usage summary for ${report.project}`,
       `Log file: ${report.logFile}`,
-      "No usage events found yet.",
-    ].join("\n");
+    ];
+    if (report.ignoredProject) lines.push("Current working directory is a markerless temp directory; usage is ignored.");
+    else lines.push("No usage events found yet.");
+    return lines.join("\n");
   }
 
   const lines = [

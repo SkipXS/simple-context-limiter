@@ -1,4 +1,4 @@
-import { MAX_BYTES, MAX_LINES } from "../constants.js";
+import { MAX_BYTES, MAX_LINES, projectKey } from "../constants.js";
 import { formatOutput } from "../output.js";
 import { emptyCounter, formatStatsReport, getStats, normalizeCounter, withSavedPercent } from "../stats.js";
 import { usageReport } from "../usage.js";
@@ -32,11 +32,13 @@ export async function usageTool(args) {
 
 function formatGuidance(report) {
   if (report.eventsAnalyzed === 0) {
-    return [
+    const lines = [
       `Usage guidance for ${report.project}`,
       `Log file: ${report.logFile}`,
-      "No usage events found yet.",
-    ].join("\n");
+    ];
+    if (report.ignoredProject) lines.push("Current working directory is a markerless temp directory; usage is ignored.");
+    else lines.push("No usage events found yet.");
+    return lines.join("\n");
   }
 
   const lines = [
@@ -76,7 +78,7 @@ function formatGuidance(report) {
 async function statsResult(maxLines, maxBytes) {
   const started = Date.now();
   const currentStats = await getStats();
-  const project = process.cwd();
+  const project = projectKey() ?? process.cwd();
   const projectStats = currentStats.projects[project] ?? { ...emptyCounter(), byTool: {} };
   const byTool = Object.fromEntries(
     Object.entries(projectStats.byTool ?? {}).map(([toolName, toolStats]) => [toolName, withSavedPercent(normalizeCounter(toolStats))]),

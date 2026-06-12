@@ -1245,6 +1245,36 @@ try {
   assert.ok(parsedStats.savedBytes > 0);
   assert.ok(parsedStats.estimatedTokensSaved > 0);
 
+  const statsProjectRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
+    import { readFile } from 'node:fs/promises';
+    import { join } from 'node:path';
+    const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
+    await callTool('context_discover', { mode: 'tree', path: '.', maxDepth: 1, maxEntries: 10 });
+    let projects = [];
+    let usageExists = false;
+    try {
+      const stats = JSON.parse(await readFile(join(process.env.HOME, '.simple-context-limiter', 'stats.json'), 'utf8'));
+      projects = Object.keys(stats.projects);
+    } catch {}
+    try { await readFile(join(process.env.HOME, '.simple-context-limiter', 'usage.jsonl'), 'utf8'); usageExists = true; } catch {}
+    const report = await callTool('context_usage', { mode: 'report' });
+    console.log(JSON.stringify({ projects, usageExists, reportText: report.content[0].text, reportMeta: report._meta }));
+  `], {
+    cwd: fallbackFilesDir,
+    timeout: 5_000,
+    env: {
+      ...process.env,
+      HOME: join(tempDir, "stats-project-home"),
+      USERPROFILE: join(tempDir, "stats-project-home"),
+    },
+  });
+  assert.equal(statsProjectRun.code, 0, statsProjectRun.stderr);
+  const statsProjectPayload = JSON.parse(statsProjectRun.stdout.trim());
+  assert.deepEqual(statsProjectPayload.projects, []);
+  assert.equal(statsProjectPayload.usageExists, false);
+  assert.match(statsProjectPayload.reportText, /markerless temp directory/);
+  assert.equal(statsProjectPayload.reportMeta.ignoredProject, true);
+
   const usageRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
     import { readFile } from 'node:fs/promises';
     import { join } from 'node:path';

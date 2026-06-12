@@ -145,7 +145,8 @@ Use `context_logs` for test/check commands when you want error blocks or a compa
 
 ### Usage Reports
 
-simple-context-limiter records local usage metadata by default in `~/.simple-context-limiter/usage.jsonl`, including the current project path (`process.cwd()`). It does not store tool outputs and does not upload anything. For shell commands, it stores a command class such as `git-history`, `dependencies`, or `infra-logs`, not the raw command string. The log is pruned after appends and capped by `SIMPLE_CONTEXT_LIMITER_USAGE_LOG_MAX_BYTES` (default 10 MB).
+simple-context-limiter records local usage metadata by default in `~/.simple-context-limiter/usage.jsonl`, including the current project key. It does not store tool outputs and does not upload anything. For shell commands, it stores a command class such as `git-history`, `dependencies`, or `infra-logs`, not the raw command string. The log is pruned after appends and capped by `SIMPLE_CONTEXT_LIMITER_USAGE_LOG_MAX_BYTES` (default 10 MB).
+Stats and usage are attributed to the nearest project marker such as `.git`, `package.json`, `pyproject.toml`, `Cargo.toml`, or `go.mod`. Markerless working directories under the system temp folder are ignored instead of being recorded as separate projects.
 
 Use `context_usage` to see aggregate savings stats, local usage reports, or guidance from local usage patterns:
 

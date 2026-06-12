@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import { STATS_FILE } from "./constants.js";
+import { projectKey, STATS_FILE } from "./constants.js";
 import { withFileLock, writeJsonAtomically } from "./storage.js";
 
 let stats;
@@ -90,7 +90,8 @@ export async function recordStats(toolName, meta) {
     try {
       await withFileLock(STATS_FILE, async () => {
         const currentStats = await loadStats();
-        const project = process.cwd();
+        const project = projectKey();
+        if (!project) return;
         const projectStats = currentStats.projects[project] ?? { ...emptyCounter(), byTool: {} };
         const toolStats = projectStats.byTool[toolName] ?? emptyCounter();
 

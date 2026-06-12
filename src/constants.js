@@ -33,6 +33,30 @@ export const STATS_FILE = path.join(CACHE_DIR, "stats.json");
 export const USAGE_LOG_FILE = path.join(CACHE_DIR, "usage.jsonl");
 export const RG_NAME = process.platform === "win32" ? "rg.exe" : "rg";
 
+const PROJECT_MARKERS = [".git", "package.json", "pyproject.toml", "Cargo.toml", "go.mod", "pom.xml", "build.gradle", "deno.json", "deno.jsonc"];
+
+export function projectKey() {
+  const cwd = path.resolve(process.cwd());
+  const projectRoot = findProjectRoot(cwd);
+  if (projectRoot) return projectRoot;
+  return isTempPath(cwd) ? undefined : cwd;
+}
+
+function findProjectRoot(startDir) {
+  let current = startDir;
+  for (;;) {
+    if (PROJECT_MARKERS.some((marker) => fs.existsSync(path.join(current, marker)))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
+
+function isTempPath(value) {
+  const relative = path.relative(path.resolve(os.tmpdir()), value);
+  return relative === "" || (relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 export function usageLogEnabled() {
   return !/^(0|false|no|off)$/i.test(process.env.SIMPLE_CONTEXT_LIMITER_USAGE_LOG ?? "")
     && !/^(1|true|yes|on)$/i.test(process.env.SIMPLE_CONTEXT_LIMITER_DISABLE_USAGE_LOG ?? "");
