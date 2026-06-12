@@ -38,12 +38,12 @@ function rpcCode(error) {
   return Number.isInteger(error.code) ? error.code : -32000;
 }
 
-const instructions = "Default to context_run, context_logs, context_read, context_search, context_files, context_tree, context_repo_summary, context_file_outline, context_fetch, context_diff, and context_usage for exploratory commands, logs, file previews, searches, repo overview, tests, web pages, git previews, and usage stats. "
+const instructions = "Default to context_run, context_logs, context_read, context_search, context_discover, context_fetch, context_diff, and context_usage for exploratory commands, logs, file previews, searches, repo overview, tests, web pages, git previews, and usage stats. "
   + "Use context_run instead of bash/terminal for commands that may produce large output. "
   + "Use context_logs instead of context_run for tests, builds, lints, server logs, and other output where errors may appear in the middle. "
   + "Use context_read instead of cat/type/Get-Content for local file previews; pass paths when you need several known files. "
   + "Use context_search instead of raw rg/grep commands for bounded local search results; pass contextLines when you need surrounding lines. "
-  + "Use context_files, context_tree, context_repo_summary, and context_file_outline for repo discovery before broad file reads. "
+  + "Use context_discover for repo summaries, tracked-file lists, directory trees, and source outlines before broad file reads. "
   + "Use context_diff with mode=status before full diffs when you only need changed file names/status. "
   + "Use context_fetch instead of web_fetch/webfetch for pages you do not need as raw HTML. "
   + "Use context_diff instead of raw git diff when reviewing working tree or staged changes. "

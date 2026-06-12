@@ -1,6 +1,6 @@
 # simple-context-limiter
 
-A minimal MCP server that keeps large command, log, file, search, repo-discovery, web, and git diff output out of your LLM context. Eleven tools, zero dependencies, works in MCP-compatible clients such as Pi, OpenCode, Claude Code, and KiloCode.
+A minimal MCP server that keeps large command, log, file, search, repo-discovery, web, and git diff output out of your LLM context. Eight tools, zero dependencies, works in MCP-compatible clients such as Pi, OpenCode, Claude Code, and KiloCode.
 
 ## Tools
 
@@ -10,10 +10,7 @@ A minimal MCP server that keeps large command, log, file, search, repo-discovery
 | `context_logs` | Extracting relevant errors from tests, builds, lints, and logs | raw test/build output, full server logs |
 | `context_read` | Reading one or more local UTF-8 text files safely | `cat huge.log`, `type huge.log`, repeated file reads |
 | `context_search` | Searching local files with bounded ripgrep output and optional context | raw `rg` / `grep` commands |
-| `context_files` | Listing tracked project files compactly | broad recursive globs, `find .` |
-| `context_tree` | Viewing a bounded directory tree | full recursive tree output |
-| `context_repo_summary` | Getting package/README/config overview | several separate file reads |
-| `context_file_outline` | Seeing imports/exports/functions/classes | reading large source files fully |
+| `context_discover` | Repo summaries, file lists, trees, and source outlines | broad globs, recursive trees, several setup reads |
 | `context_fetch` | Fetching web pages as readable text | `webfetch`, raw HTML downloads |
 | `context_diff` | Reviewing compact Git diffs or changed-file status | raw `git diff` / `git status` output |
 | `context_usage` | Viewing savings stats or local usage reports | manual accounting, guessing from project trees alone |
@@ -94,15 +91,31 @@ simple-context-limiter does not download ripgrep. It uses the first available bi
 
 If none is found, `context_search` returns a clear error. The other tools do not need ripgrep.
 
-### Repo Discovery Tools
+### `context_discover`
 
-Use these before broad file reads or recursive shell commands:
+Use this before broad file reads or recursive shell commands. Pick a mode for the discovery shape you need:
 
-- `context_files` lists tracked files with optional regex filtering.
-- `context_tree` shows a bounded tree and skips heavy folders like `.git` and `node_modules`.
-- `context_repo_summary` summarizes package metadata, scripts, configs, README preview, and tracked-file count.
-- `context_file_outline` extracts imports, exports, functions, classes, and top-level declarations from one source file.
+- `summary` summarizes package metadata, scripts, configs, README preview, and tracked-file count.
+- `files` lists tracked files with optional regex filtering.
+- `tree` shows a bounded tree and skips heavy folders like `.git` and `node_modules`.
+- `outline` extracts imports, exports, functions, classes, and top-level declarations from one source file.
 - `context_search` searches with bounded context windows when `contextLines` is set.
+
+```json
+{ "mode": "summary", "maxLines": 80 }
+```
+
+```json
+{ "mode": "files", "path": "src", "include": "\\.js$", "maxFiles": 500 }
+```
+
+```json
+{ "mode": "tree", "path": ".", "maxDepth": 3, "maxEntries": 200 }
+```
+
+```json
+{ "mode": "outline", "path": "src/tools/run.js", "maxSymbols": 200 }
+```
 
 Use `context_logs` for test/check commands when you want error blocks or a compact tail fallback instead of full output.
 
@@ -189,7 +202,7 @@ The server also injects MCP startup instructions telling the LLM to default to t
 - `context_logs` instead of plain command output for tests, builds, lints, server logs, and other error-heavy output
 - `context_read` instead of `cat`, `type`, or `Get-Content` for file previews
 - `context_search` instead of raw `rg` or `grep` commands for bounded search results
-- `context_files`, `context_tree`, `context_repo_summary`, and `context_file_outline` before broad file reads
+- `context_discover` before broad file reads
 - `context_fetch` instead of raw web fetches for pages that are not needed as raw HTML
 - `context_diff` instead of raw `git diff` for compact working-tree or staged diff previews
 - `context_usage` when you want to inspect accumulated current-project savings or usage reports

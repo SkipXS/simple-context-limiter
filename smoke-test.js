@@ -198,10 +198,7 @@ try {
     "context_logs",
     "context_read",
     "context_search",
-    "context_files",
-    "context_tree",
-    "context_repo_summary",
-    "context_file_outline",
+    "context_discover",
     "context_fetch",
     "context_diff",
     "context_usage",
@@ -215,8 +212,8 @@ try {
   assert.match(unknownTool.error.message, /Unknown tool/);
 
   const files = await request("tools/call", {
-    name: "context_files",
-    arguments: { include: "^(server|package)\\.json$|^server\\.js$", maxFiles: 20 },
+    name: "context_discover",
+    arguments: { mode: "files", include: "^(server|package)\\.json$|^server\\.js$", maxFiles: 20 },
   });
   assert.ok(files.result, JSON.stringify(files));
   assert.match(files.result.content[0].text, /server\.js/);
@@ -227,7 +224,7 @@ try {
   await writeFile(join(fallbackFilesDir, "sub", "a.txt"), "a\n", "utf8");
   const fallbackFilesRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
     const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
-    const result = await callTool('context_files', { path: 'sub', maxFiles: 20 });
+    const result = await callTool('context_discover', { mode: 'files', path: 'sub', maxFiles: 20 });
     console.log(JSON.stringify(result.content[0].text));
   `], {
     cwd: fallbackFilesDir,
@@ -238,22 +235,22 @@ try {
   assert.match(JSON.parse(fallbackFilesRun.stdout.trim()), /sub\/a\.txt/);
 
   const tree = await request("tools/call", {
-    name: "context_tree",
-    arguments: { path: tempDir, maxDepth: 2, maxEntries: 20 },
+    name: "context_discover",
+    arguments: { mode: "tree", path: tempDir, maxDepth: 2, maxEntries: 20 },
   });
   assert.ok(tree.result, JSON.stringify(tree));
   assert.match(tree.result.content[0].text, /large\.txt/);
 
   const repoSummary = await request("tools/call", {
-    name: "context_repo_summary",
-    arguments: { maxLines: 40 },
+    name: "context_discover",
+    arguments: { mode: "summary", maxLines: 40 },
   });
   assert.ok(repoSummary.result, JSON.stringify(repoSummary));
   assert.match(repoSummary.result.content[0].text, /simple-context-limiter/);
 
   const outline = await request("tools/call", {
-    name: "context_file_outline",
-    arguments: { path: join(import.meta.dirname, "src", "tools", "run.js"), maxSymbols: 20 },
+    name: "context_discover",
+    arguments: { mode: "outline", path: join(import.meta.dirname, "src", "tools", "run.js"), maxSymbols: 20 },
   });
   assert.ok(outline.result, JSON.stringify(outline));
   assert.match(outline.result.content[0].text, /runTool/);
