@@ -34,6 +34,20 @@ function resultResponse(id, result) {
   return { jsonrpc: "2.0", id, result };
 }
 
+function isProtocolToolError(error) {
+  return error?.code === -32601 || error?.code === -32602;
+}
+
+function toolErrorResult(error) {
+  const meta = commandErrorData(error) ?? errorData(error);
+  const result = {
+    content: [{ type: "text", text: error.message }],
+    isError: true,
+  };
+  if (meta !== undefined) result._meta = meta;
+  return result;
+}
+
 function isRequestObject(message) {
   return message !== null && typeof message === "object" && !Array.isArray(message);
 }
@@ -97,6 +111,7 @@ async function handleMessage(msg) {
     return errorResponse(id, -32601, `Unknown method: ${method}`);
   } catch (e) {
     if (!hasId) return undefined;
+    if (method === "tools/call" && !isProtocolToolError(e)) return resultResponse(id, toolErrorResult(e));
     return errorResponse(id, rpcCode(e), e.message, commandErrorData(e) ?? errorData(e));
   }
 }

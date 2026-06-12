@@ -267,6 +267,7 @@ try {
     "context_diff",
     "context_usage",
   ]);
+  assert.equal(listed.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
 
   const unknownTool = await request("tools/call", {
     name: "context_missing",
@@ -350,6 +351,13 @@ try {
   });
   assert.equal(invalidDiffMaxFiles.error.code, -32602);
   assert.match(invalidDiffMaxFiles.error.message, /maxFiles must be between 1 and 100/);
+
+  const unknownRunArg = await request("tools/call", {
+    name: "context_run",
+    arguments: { command: "noop", unexpected: true },
+  });
+  assert.equal(unknownRunArg.error.code, -32602);
+  assert.match(unknownRunArg.error.message, /Unknown argument/);
 
   const ok = await request("tools/call", {
     name: "context_run",
@@ -441,8 +449,8 @@ try {
       timeoutMs: 100,
     },
   });
-  assert.equal(timedOutRun.error.code, -32000);
-  assert.match(timedOutRun.error.message, /timed out after 100ms/);
+  assert.equal(timedOutRun.result.isError, true);
+  assert.match(timedOutRun.result.content[0].text, /timed out after 100ms/);
 
   const logsCommand = isPowerShellConfigured()
     ? `& ${shellQuote(process.execPath)} -e "for (let i = 0; i < 40; i++) console.log('line ' + i); console.error('AssertionError: expected true'); console.error('    at test.js:10:5'); process.exit(7)"`
@@ -463,6 +471,20 @@ try {
   assert.match(logs.result.content[0].text, /at test\.js:10:5/);
   assert.doesNotMatch(logs.result.content[0].text, /line 0/);
   assertSavingsMeta(logs.result._meta);
+
+  const npmErrLogs = await request("tools/call", {
+    name: "context_logs",
+    arguments: {
+      command: isPowerShellConfigured()
+        ? `& ${shellQuote(process.execPath)} -e "for (let i = 0; i < 20; i++) console.log('before ' + i); console.error('npm ERR! code E404'); for (let i = 0; i < 40; i++) console.log('after ' + i)"`
+        : `${shellQuote(process.execPath)} -e "for (let i = 0; i < 20; i++) console.log('before ' + i); console.error('npm ERR! code E404'); for (let i = 0; i < 40; i++) console.log('after ' + i)"`,
+      contextLines: 0,
+      maxLines: 10,
+      maxBytes: 4096,
+    },
+  });
+  assert.equal(npmErrLogs.result._meta.fallback, false);
+  assert.match(npmErrLogs.result.content[0].text, /npm ERR! code E404/);
 
   const logsFallbackCommand = isPowerShellConfigured()
     ? `& ${shellQuote(process.execPath)} -e "for (let i = 0; i < 30; i++) console.log('plain ' + i)"`
@@ -542,8 +564,8 @@ try {
     name: "context_run",
     arguments: { command: isPowerShellConfigured() ? "exit 7" : `${shellQuote(process.execPath)} -e "process.exit(7)"` },
   });
-  assert.equal(failed.error.code, -32000);
-  assert.equal(failed.error.data.exitCode, 7);
+  assert.equal(failed.result.isError, true);
+  assert.equal(failed.result._meta.exitCode, 7);
 
   const slow = request("tools/call", {
     name: "context_run",

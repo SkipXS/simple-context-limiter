@@ -15,6 +15,9 @@ function terminateChild(child) {
       windowsHide: true,
     });
     killer.on("error", () => child.kill());
+    killer.on("close", (code) => {
+      if (code !== 0) child.kill();
+    });
     killer.unref();
     return;
   }

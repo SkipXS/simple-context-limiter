@@ -132,7 +132,7 @@ function extractLogBlocks(text, maxBlocks, contextLines, maxLines) {
 
 function isInterestingLogLine(line) {
   return /\b(error|failed|failure|exception|assertion|fatal|panic|traceback|warning|warn)\b/i.test(line)
-    || /\b(ERR!|ERROR|FAIL|FAILED|FATAL|WARN)\b/.test(line)
+    || /(?:\bERR!|\b(?:ERROR|FAIL|FAILED|FATAL|WARN)\b)/.test(line)
     || /\b[A-Z][A-Za-z0-9_]*(?:Error|Exception):/.test(line)
     || /\bTS\d{4}:/.test(line)
     || /^\s*at\s+.+:\d+:\d+\)?$/.test(line)

@@ -286,6 +286,21 @@ const handlers = {
   context_usage: usageTool,
 };
 
+for (const tool of tools.tools) tool.inputSchema.additionalProperties = false;
+
+const inputSchemas = new Map(tools.tools.map((tool) => [tool.name, tool.inputSchema]));
+
+function validateKnownArgs(name, args) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return;
+  const allowed = new Set(Object.keys(inputSchemas.get(name)?.properties ?? {}));
+  const unknown = Object.keys(args).find((key) => !allowed.has(key));
+  if (!unknown) return;
+
+  const error = new Error(`Unknown argument for ${name}: ${unknown}`);
+  error.code = -32602;
+  throw error;
+}
+
 export async function callTool(name, args) {
   const started = Date.now();
   let result;
@@ -294,6 +309,7 @@ export async function callTool(name, args) {
   try {
     const handler = handlers[name];
     if (handler) {
+      validateKnownArgs(name, args);
       result = await handler(args);
       return result;
     }
