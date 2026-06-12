@@ -70,7 +70,8 @@ For larger targeted source sections, raise `maxLines` up to 500 while keeping `f
 ```
 
 File reads are capped at 10 MB by default before formatting. Override with `SIMPLE_CONTEXT_LIMITER_MAX_READ_BYTES` if needed.
-When `fromLine` or `toLine` is used, the file is streamed line-by-line and `maxLines` still caps the returned range. Use `path` to identify the ranged file; if `paths` is also provided, those files are included as additional non-ranged previews.
+When `fromLine` or `toLine` is used, the file is streamed line-by-line and `maxLines` still caps the returned range. Range scans also stop after the read cap; if the requested line is deeper than that, `_meta.scanLimited` is `true` and the response is marked truncated. `_meta` includes `returnedLines`, `scannedLines`, `scannedBytes`, `rangeLimited`, `scanLimited`, and `scanTimedOut` so callers can retry with a narrower range, search first, or raise `SIMPLE_CONTEXT_LIMITER_MAX_READ_BYTES` for trusted large files.
+Use `path` to identify the ranged file; if `paths` is also provided, those files are included as additional non-ranged previews and per-file range metadata appears in `_meta.files`.
 
 Read multiple known files in one bounded response:
 
@@ -136,6 +137,8 @@ Use this before broad file reads or recursive shell commands. Pick a mode for th
 ```json
 { "mode": "tree", "path": ".", "maxDepth": 3, "maxEntries": 200 }
 ```
+
+When `tree` hits `maxEntries`, it stops reading additional entries and reports omitted entries as a lower bound in `_meta.entriesOmittedLowerBound`. The shown entries are a bounded filesystem-order sample sorted for readability, not a complete alphabetic prefix of very large directories.
 
 ```json
 { "mode": "outline", "path": "src/tools/run.js", "maxSymbols": 200 }

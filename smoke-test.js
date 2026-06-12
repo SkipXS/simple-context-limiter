@@ -216,12 +216,14 @@ try {
   const manyShortLinesFile = join(tempDir, "many-short-lines.txt");
   const manyByteLinesFile = join(tempDir, "many-byte-lines.txt");
   const hugeRangeFile = join(tempDir, "huge-range.txt");
+  const scanLimitedRangeFile = join(tempDir, "scan-limited-range.txt");
   const dashFile = join(tempDir, "dash.txt");
   await writeFile(largeFile, Array.from({ length: 300 }, (_, i) => `file line ${i}`).join("\n"), "utf8");
   await writeFile(largeOneLineFile, "🙂".repeat(2048), "utf8");
   await writeFile(manyShortLinesFile, Array.from({ length: 300 }, () => "x").join("\n"), "utf8");
   await writeFile(manyByteLinesFile, Array.from({ length: 500 }, () => "xxxx").join("\n"), "utf8");
   await writeFile(hugeRangeFile, `${"x".repeat(4096)}\nsmall\n`, "utf8");
+  await writeFile(scanLimitedRangeFile, "x".repeat(4096), "utf8");
   await writeFile(dashFile, "-needle\nplain\n", "utf8");
 
   const init = await request("initialize", {});
@@ -369,6 +371,16 @@ try {
   });
   assert.equal(depthLimitedTree.result._meta.depthLimited, true);
   assert.equal(depthLimitedTree.result._meta.truncated, true);
+
+  const entryLimitedTree = await request("tools/call", {
+    name: "context_discover",
+    arguments: { mode: "tree", path: join(fallbackFilesDir, "sub"), maxDepth: 1, maxEntries: 3 },
+  });
+  assert.equal(entryLimitedTree.result._meta.entriesShown, 3);
+  assert.ok(entryLimitedTree.result._meta.entriesOmitted > 0);
+  assert.equal(entryLimitedTree.result._meta.entriesOmittedLowerBound, entryLimitedTree.result._meta.entriesOmitted);
+  assert.equal(entryLimitedTree.result._meta.entriesOmittedKnown, false);
+  assert.equal(entryLimitedTree.result._meta.truncated, true);
 
   const repoSummary = await request("tools/call", {
     name: "context_discover",
@@ -748,6 +760,23 @@ try {
   assert.equal(byteLimitedRangeRead.result._meta.returnedLines, 1);
   assert.ok(byteLimitedRangeRead.result._meta.savedBytes > 0);
   assert.match(byteLimitedRangeRead.result.content[0].text, /^x+/);
+
+  const scanLimitedRangeRead = await request("tools/call", {
+    name: "context_read",
+    arguments: { path: scanLimitedRangeFile, fromLine: 2, toLine: 2, maxLines: 20 },
+  });
+  assert.equal(scanLimitedRangeRead.result._meta.truncated, true);
+  assert.equal(scanLimitedRangeRead.result._meta.scanLimited, true);
+  assert.equal(scanLimitedRangeRead.result._meta.returnedLines, 0);
+
+  const scanLimitedReadMany = await request("tools/call", {
+    name: "context_read",
+    arguments: { path: scanLimitedRangeFile, paths: [dashFile], fromLine: 2, toLine: 2, maxLinesPerFile: 20, maxTotalBytes: 4096 },
+  });
+  assert.equal(scanLimitedReadMany.result._meta.files[0].scanLimited, true);
+  assert.equal(scanLimitedReadMany.result._meta.files[0].returnedLines, 0);
+  assert.equal(typeof scanLimitedReadMany.result._meta.files[0].scannedBytes, "number");
+  assert.equal(scanLimitedReadMany.result._meta.files[1].scanLimited, undefined);
 
   const newlineLimitedRangeRead = await request("tools/call", {
     name: "context_read",

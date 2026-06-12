@@ -110,7 +110,7 @@ async function treeMode(args) {
   const state = { entries: 0, omitted: 0, depthLimited: false };
   const lines = [path.basename(root) || root];
   await appendTree(root, "", 1, depthLimit, entryLimit, state, lines);
-  if (state.omitted > 0) lines.push(`... ${state.omitted} entries omitted ...`);
+  if (state.omitted > 0) lines.push(`... at least ${state.omitted} entries omitted ...`);
 
   const formatted = formatOutput(lines.join("\n"), lineLimit, byteLimit);
   const meta = {
@@ -118,6 +118,8 @@ async function treeMode(args) {
     root,
     entriesShown: state.entries,
     entriesOmitted: state.omitted,
+    entriesOmittedLowerBound: state.omitted,
+    entriesOmittedKnown: state.omitted === 0,
     depthLimited: state.depthLimited,
     totalLines: formatted.totalLines,
     totalBytes: formatted.totalBytes,
@@ -132,16 +134,16 @@ async function treeMode(args) {
 
 async function appendTree(directory, prefix, depth, maxDepth, maxEntries, state, lines) {
   if (depth > maxDepth || state.entries >= maxEntries) return;
-  const entries = (await fs.promises.readdir(directory, { withFileTypes: true }))
-    .filter((entry) => !(entry.isDirectory() && SKIP_DIRS.has(entry.name)))
-    .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
+  const remaining = maxEntries - state.entries;
+  const { entries, omitted } = await readTreeEntries(directory, remaining);
+  state.omitted += omitted;
 
   for (const [index, entry] of entries.entries()) {
     if (state.entries >= maxEntries) {
       state.omitted += entries.length - index;
       return;
     }
-    const last = index === entries.length - 1;
+    const last = omitted === 0 && index === entries.length - 1;
     lines.push(`${prefix}${last ? "└──" : "├──"} ${entry.name}${entry.isDirectory() ? "/" : ""}`);
     state.entries++;
     if (entry.isDirectory()) {
@@ -149,6 +151,28 @@ async function appendTree(directory, prefix, depth, maxDepth, maxEntries, state,
       else await appendTree(path.join(directory, entry.name), `${prefix}${last ? "    " : "│   "}`, depth + 1, maxDepth, maxEntries, state, lines);
     }
   }
+}
+
+async function readTreeEntries(directory, maxEntries) {
+  const entries = [];
+  let omitted = 0;
+  const dir = await fs.promises.opendir(directory);
+
+  try {
+    for await (const entry of dir) {
+      if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue;
+      if (entries.length >= maxEntries) {
+        omitted++;
+        break;
+      }
+      entries.push(entry);
+    }
+  } finally {
+    await dir.close().catch(() => {});
+  }
+
+  entries.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
+  return { entries, omitted };
 }
 
 async function summaryMode(args) {

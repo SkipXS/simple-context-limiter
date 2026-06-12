@@ -106,6 +106,14 @@ export async function readManyTool(args, toolName = "context_read") {
       savedBytes: result._meta.savedBytes,
       truncated: result._meta.truncated,
       fileReadLimited: result._meta.fileReadLimited,
+      fromLine: result._meta.fromLine,
+      toLine: result._meta.toLine,
+      returnedLines: result._meta.returnedLines,
+      scannedLines: result._meta.scannedLines,
+      scannedBytes: result._meta.scannedBytes,
+      scanLimited: result._meta.scanLimited,
+      rangeLimited: result._meta.rangeLimited,
+      scanTimedOut: result._meta.scanTimedOut,
     })),
   };
   await recordStats(toolName, meta);
@@ -134,8 +142,8 @@ async function readFilePreview(args, toolName) {
 
   const rangeMode = fromLine !== undefined || toLine !== undefined;
   const range = rangeMode ? normalizeLineRange(fromLine, toLine) : undefined;
-  const { text, limited, rangeLimited, returnedLines, scannedLines, scannedBytes, scanTimedOut } = rangeMode
-    ? await readLineRange(resolved, range.fromLine, range.toLine, lineLimit, MAX_READ_BYTES, READ_RANGE_TIMEOUT_MS)
+  const { text, limited, rangeLimited, returnedLines, scannedLines, scannedBytes, scanLimited, scanTimedOut } = rangeMode
+    ? await readLineRange(resolved, range.fromLine, range.toLine, lineLimit, MAX_READ_BYTES, MAX_READ_BYTES, READ_RANGE_TIMEOUT_MS)
     : await readLimitedFile(resolved, stat.size, MAX_READ_BYTES);
   const formatted = formatOutput(text, lineLimit, byteLimit);
   const contextSavings = savingsForReturnedBytes(stat.size, formatted.returnedBytes);
@@ -145,13 +153,14 @@ async function readFilePreview(args, toolName) {
     totalLines: formatted.totalLines,
     totalBytes: stat.size,
     ...contextSavings,
-    truncated: formatted.truncated || rangeLimited || limited || scanTimedOut,
+    truncated: formatted.truncated || rangeLimited || limited || scanLimited || scanTimedOut,
     fileReadLimited: limited,
     fromLine: range?.fromLine,
     toLine: range?.toLine === Infinity ? undefined : range?.toLine,
     returnedLines,
     scannedLines,
     scannedBytes,
+    scanLimited,
     rangeLimited,
     scanTimedOut,
   };
@@ -183,7 +192,7 @@ function normalizeLineRange(fromLine, toLine) {
   return { fromLine: from, toLine: to };
 }
 
-async function readLineRange(filePath, fromLine, toLine, maxLines, maxBytes, timeoutMs) {
+async function readLineRange(filePath, fromLine, toLine, maxLines, maxBytes, maxScanBytes, timeoutMs) {
   const input = fs.createReadStream(filePath);
   const decoder = new StringDecoder("utf8");
   const lines = [];
@@ -192,6 +201,7 @@ async function readLineRange(filePath, fromLine, toLine, maxLines, maxBytes, tim
   let scannedBytes = 0;
   let limited = false;
   let rangeLimited = false;
+  let scanLimited = false;
   let scanTimedOut = false;
   let currentLine = "";
   const timer = setTimeout(() => {
@@ -281,9 +291,14 @@ async function readLineRange(filePath, fromLine, toLine, maxLines, maxBytes, tim
         input.destroy();
         break;
       }
+      if (lineNumber < toLine && scannedBytes > maxScanBytes) {
+        scanLimited = true;
+        input.destroy();
+        break;
+      }
     }
 
-    if (!limited && !rangeLimited && !scanTimedOut && lineNumber < toLine) {
+    if (!limited && !rangeLimited && !scanLimited && !scanTimedOut && lineNumber < toLine) {
       processText(decoder.end());
       if (currentLine) finishCurrentLine();
     }
@@ -301,6 +316,7 @@ async function readLineRange(filePath, fromLine, toLine, maxLines, maxBytes, tim
     returnedLines: lines.length,
     scannedLines: lineNumber,
     scannedBytes,
+    scanLimited,
     scanTimedOut,
   };
 }
