@@ -21,6 +21,7 @@ async function check(file) {
 const files = [
   "server.js",
   "smoke-test.js",
+  "pack-smoke-test.js",
   "check-syntax.js",
   ...await jsFiles("src"),
 ];

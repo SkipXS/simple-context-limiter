@@ -269,7 +269,8 @@ When available, `error.data` includes diagnostic fields. Command failures can in
 ## Requirements
 
 - Node.js >= 22
-- No npm dependencies
+- No npm package dependencies
+- Optional external tools: `rg` / ripgrep is needed for text `search`; `sg` / ast-grep is needed only for `search` with `engine: "ast"`
 
 ## Installation
 
@@ -380,6 +381,8 @@ For Pi:
 | `SIMPLE_CONTEXT_LIMITER_USAGE_LOG` | enabled | Set to `0` to disable local usage logging |
 | `SIMPLE_CONTEXT_LIMITER_USAGE_LOG_MAX_BYTES` | `10485760` | Max usage log bytes kept on disk |
 | `SIMPLE_CONTEXT_LIMITER_DISABLE_USAGE_LOG` | unset | Set to `1` to disable local usage logging |
+| `SIMPLE_CONTEXT_LIMITER_STATS` | enabled | Set to `0` to disable aggregate stats writes |
+| `SIMPLE_CONTEXT_LIMITER_DISABLE_STATS` | unset | Set to `1` to disable aggregate stats writes |
 
 ## Security / Trust Model
 

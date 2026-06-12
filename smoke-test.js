@@ -11,6 +11,7 @@ import { errorData, runProcess, runProcessLines } from "./src/process.js";
 import { callTool } from "./src/tools.js";
 
 process.env.SIMPLE_CONTEXT_LIMITER_USAGE_LOG = "0";
+process.env.SIMPLE_CONTEXT_LIMITER_STATS = "0";
 
 const child = spawn(process.execPath, ["server.js"], {
   cwd: import.meta.dirname,
@@ -1383,6 +1384,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
       ...process.env,
       HOME: join(tempDir, "stats-home"),
       USERPROFILE: join(tempDir, "stats-home"),
+      SIMPLE_CONTEXT_LIMITER_STATS: "1",
       SIMPLE_CONTEXT_LIMITER_ALLOW_NON_HTTP_FETCH: "1",
       SIMPLE_CONTEXT_LIMITER_MAX_FETCH_BYTES: "1024",
     },

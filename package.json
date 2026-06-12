@@ -18,13 +18,16 @@
   "files": [
     "server.js",
     "src/",
+    "check-syntax.js",
+    "smoke-test.js",
+    "pack-smoke-test.js",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "check": "node check-syntax.js",
     "test": "node smoke-test.js",
-    "release:check": "npm pack --dry-run",
+    "release:check": "npm pack --dry-run && node pack-smoke-test.js",
     "prepack": "npm run check && npm test"
   },
   "bin": { "simple-context-limiter": "server.js" },

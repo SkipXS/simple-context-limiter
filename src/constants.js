@@ -65,6 +65,11 @@ export function usageLogEnabled() {
     && !/^(1|true|yes|on)$/i.test(process.env.SIMPLE_CONTEXT_LIMITER_DISABLE_USAGE_LOG ?? "");
 }
 
+export function statsEnabled() {
+  return !/^(0|false|no|off)$/i.test(process.env.SIMPLE_CONTEXT_LIMITER_STATS ?? "")
+    && !/^(1|true|yes|on)$/i.test(process.env.SIMPLE_CONTEXT_LIMITER_DISABLE_STATS ?? "");
+}
+
 export function normalizeByteLimit(value, fallback) {
   const numeric = Number(value);
   return Number.isFinite(numeric) && numeric > 0 ? Math.trunc(numeric) : fallback;

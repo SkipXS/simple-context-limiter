@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import { projectKey, STATS_FILE } from "./constants.js";
+import { projectKey, statsEnabled, STATS_FILE } from "./constants.js";
 import { withFileLock, writeJsonAtomically } from "./storage.js";
 
 let stats;
@@ -87,6 +87,8 @@ function addCounter(target, meta) {
 }
 
 export function recordStats(toolName, meta) {
+  if (!statsEnabled()) return;
+
   statsUpdate = statsUpdate.catch(() => {}).then(async () => {
     try {
       await withFileLock(STATS_FILE, async () => {
