@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -1013,6 +1013,55 @@ try {
     assert.equal(astNoMatches.result._meta.engine, "ast");
     assert.equal(astNoMatches.result._meta.shownMatches, 0);
   }
+
+  const fakeAstDir = join(tempDir, "fake-ast-grep-bin");
+  await mkdir(fakeAstDir, { recursive: true });
+  let fakeAstCommand;
+  const fakeAstCode = `#!${process.execPath.replaceAll("\\", "/")}
+const args = process.argv.slice(2);
+if (args.includes('--version')) {
+  console.log('ast-grep fake 1.0.0');
+  process.exit(0);
+}
+if (!args.includes('run')) process.exit(2);
+const lang = args[args.indexOf('--lang') + 1];
+function match(line, column, text, lines) {
+  return { file: 'src/example.ts', range: { start: { line, column } }, text, lines, language: lang };
+}
+console.log(JSON.stringify(match(4, 2, 'target()', ${JSON.stringify("before();\ntarget();\nafter();")})));
+console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
+`;
+  if (process.platform === "win32") {
+    fakeAstCommand = join(fakeAstDir, "sg.cmd");
+    await writeFile(join(fakeAstDir, "fake-sg.js"), fakeAstCode, "utf8");
+    await writeFile(fakeAstCommand, `@ECHO off\r\nSETLOCAL\r\nSET dp0=%~dp0\r\n"${process.execPath}" "%dp0%\\fake-sg.js" %*\r\n`, "utf8");
+  } else {
+    fakeAstCommand = join(fakeAstDir, "sg");
+    await writeFile(fakeAstCommand, fakeAstCode, "utf8");
+    await chmod(fakeAstCommand, 0o755);
+  }
+
+  const fakeAstRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
+    const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
+    const result = await callTool('search', { engine: 'ast', pattern: 'target()', path: '.', include: '**/*.ts', contextLines: 1, maxMatches: 1, maxLines: 40 });
+    console.log(JSON.stringify({ text: result.content[0].text, meta: result._meta }));
+  `], {
+    cwd: tempDir,
+    timeout: 5_000,
+    env: {
+      ...process.env,
+      SIMPLE_CONTEXT_LIMITER_AST_GREP_PATH: fakeAstCommand,
+    },
+  });
+  assert.equal(fakeAstRun.code, 0, fakeAstRun.stderr);
+  const fakeAstPayload = JSON.parse(fakeAstRun.stdout.trim());
+  assert.equal(fakeAstPayload.meta.language, "typescript");
+  assert.equal(fakeAstPayload.meta.shownMatches, 1);
+  assert.equal(fakeAstPayload.meta.truncated, true);
+  assert.match(fakeAstPayload.text, /src\/example\.ts:5:3: target\(\)/);
+  assert.match(fakeAstPayload.text, /> 5: target\(\);/);
+  assert.match(fakeAstPayload.text, / 4: before\(\);/);
+  assert.match(fakeAstPayload.text, /more matches omitted/);
 
   const missingAstGrepRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
     const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});

@@ -1,17 +1,41 @@
 import { spawn } from "node:child_process";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { COMMAND_SHELL, DEFAULT_COMMAND_TIMEOUT_MS, MAX_COMMAND_BYTES } from "./constants.js";
 import { formatOutput } from "./output.js";
 
 function spawnTarget(file, args, options = {}) {
   if (options.windowsCommandShim && process.platform === "win32") {
+    const npmShim = resolveNpmCommandShim(file);
+    if (npmShim) return { file: process.execPath, args: [npmShim, ...args] };
+
     return {
       file: process.env.ComSpec || "cmd.exe",
-      args: ["/d", "/c", file, ...args],
+      args: ["/d", "/s", "/c", ["call", file, ...args.map(escapeWindowsCmdArg)].join(" ")],
     };
   }
 
   return { file, args };
+}
+
+function resolveNpmCommandShim(file) {
+  if (!/\.cmd$/i.test(file)) return undefined;
+
+  try {
+    const content = fs.readFileSync(file, "utf8");
+    const match = content.match(/"%dp0%\\([^"]+)"\s+%\*/i);
+    if (!match) return undefined;
+
+    const target = path.join(path.dirname(file), ...match[1].split("\\"));
+    return fs.existsSync(target) ? target : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function escapeWindowsCmdArg(value) {
+  return String(value).replace(/[()%!^"<>&|]/g, "^$&");
 }
 
 function terminateChild(child) {

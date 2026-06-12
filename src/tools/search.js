@@ -247,8 +247,21 @@ function inferAstLanguage(value) {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim().toLowerCase();
   if (!normalized) return undefined;
-  const extension = path.extname(normalized.replace(/[)}\]]+$/g, ""));
-  return AST_LANGUAGE_BY_EXTENSION.get(extension);
+
+  const direct = AST_LANGUAGE_BY_EXTENSION.get(path.extname(normalized.replace(/[)}\]]+$/g, "")));
+  if (direct) return direct;
+
+  const extensions = new Set();
+  for (const match of normalized.matchAll(/\.([a-z0-9]+)/g)) extensions.add(`.${match[1]}`);
+  for (const brace of normalized.matchAll(/\{([^}]+)\}/g)) {
+    for (const part of brace[1].split(",")) {
+      const extension = part.trim().replace(/^\*?\.?/, "");
+      if (extension) extensions.add(`.${extension}`);
+    }
+  }
+
+  const languages = new Set([...extensions].map((extension) => AST_LANGUAGE_BY_EXTENSION.get(extension)).filter(Boolean));
+  return languages.size === 1 ? [...languages][0] : undefined;
 }
 
 async function astSearchTool(pattern, searchPath, include, language, contextLines, maxMatches, maxLines, maxBytes) {
@@ -316,20 +329,41 @@ function parseAstGrepLine(line) {
 }
 
 function formatAstMatches(matches, limited) {
-  const lines = matches.map((match) => {
-    const file = typeof match.file === "string" ? match.file : "(unknown file)";
-    const start = match.range?.start;
-    const line = Number.isInteger(start?.line) ? start.line : 0;
-    const column = Number.isInteger(start?.column) ? start.column : 0;
-    const text = typeof match.lines === "string"
-      ? match.lines.trim()
-      : typeof match.text === "string"
-        ? match.text.trim()
-        : "(match)";
-    return `${file}:${line}:${column}: ${text}`;
-  });
+  const lines = matches.flatMap(formatAstMatch);
   if (limited) lines.push("... more matches omitted ...");
   return lines.join("\n");
+}
+
+function formatAstMatch(match) {
+  const file = typeof match.file === "string" ? match.file : "(unknown file)";
+  const start = match.range?.start;
+  const line = Number.isInteger(start?.line) ? start.line + 1 : 0;
+  const column = Number.isInteger(start?.column) ? start.column + 1 : 0;
+  const matchText = compactAstText(match.text);
+  const header = `${file}:${line}:${column}: ${matchText}`;
+  const context = formatAstContext(match, line);
+  return context.length > 0 ? [header, ...context] : [header];
+}
+
+function compactAstText(text) {
+  if (typeof text !== "string" || text.trim() === "") return "(match)";
+  const compact = text.trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean).join(" ");
+  return compact.length > 160 ? `${compact.slice(0, 157)}...` : compact;
+}
+
+function formatAstContext(match, startLine) {
+  if (typeof match.lines !== "string" || match.lines.trim() === "") return [];
+  const contextLines = match.lines.replace(/\r?\n$/, "").split(/\r?\n/);
+  if (contextLines.length <= 1) return [];
+
+  const needle = typeof match.text === "string" ? match.text.trim().split(/\r?\n/)[0]?.trim() : "";
+  const matchIndex = Math.max(0, contextLines.findIndex((line) => needle && line.includes(needle)));
+  const firstLine = startLine - matchIndex;
+
+  return contextLines.map((line, index) => {
+    const marker = index === matchIndex ? ">" : " ";
+    return `${marker} ${firstLine + index}: ${line}`;
+  });
 }
 
 async function searchWithContext(rg, pattern, searchPath, include, contextLines, maxMatches, maxLines, maxBytes) {

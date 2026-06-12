@@ -105,6 +105,8 @@ Structural search is available when the ast-grep CLI is installed. It is optiona
 { "engine": "ast", "pattern": "assert.equal($A, $B)", "path": "smoke-test.js", "maxMatches": 20 }
 ```
 
+For AST searches, `contextLines` includes bounded source context under each compact `file:line:column` match.
+
 Install ast-grep with one of:
 
 ```bash
