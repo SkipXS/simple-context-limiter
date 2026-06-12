@@ -84,6 +84,7 @@ async function fetchUrl(url, force) {
   }
 
   if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
     const error = new Error(`HTTP ${res.status} ${res.statusText}`);
     error.code = -32000;
     error.httpStatus = res.status;

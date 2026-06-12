@@ -1317,10 +1317,35 @@ try {
   assert.equal(usageOptOutRun.code, 0, usageOptOutRun.stderr);
   assert.equal(usageOptOutRun.stdout.trim(), "missing");
 
+  let streamingErrorClosed = false;
+  let resolveStreamingErrorClosed;
+  const streamingErrorClosedPromise = new Promise((resolve) => {
+    resolveStreamingErrorClosed = resolve;
+  });
   httpServer = createServer((req, res) => {
     if (req.url === "/large") {
       res.writeHead(200, { "content-type": "text/plain" });
       res.end("x".repeat(50000));
+      return;
+    }
+
+    if (req.url === "/stream-error") {
+      res.writeHead(500, { "content-type": "text/plain" });
+      let chunks = 0;
+      const interval = setInterval(() => {
+        chunks++;
+        if (chunks > 1_000) {
+          clearInterval(interval);
+          res.end();
+          return;
+        }
+        res.write("x".repeat(1024));
+      }, 10);
+      res.on("close", () => {
+        streamingErrorClosed = true;
+        clearInterval(interval);
+        resolveStreamingErrorClosed();
+      });
       return;
     }
 
@@ -1342,6 +1367,19 @@ try {
     assert.equal(data.httpStatusText, "I'm a Teapot");
     assert.match(data.url, /127\.0\.0\.1/);
   }
+  try {
+    await callTool("context_fetch", { url: `http://127.0.0.1:${port}/stream-error`, force: true });
+    assert.fail("expected context_fetch to reject streaming HTTP errors");
+  } catch (error) {
+    const data = errorData(error);
+    assert.equal(error.code, -32000);
+    assert.equal(data.httpStatus, 500);
+  }
+  await Promise.race([
+    streamingErrorClosedPromise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("timed out waiting for streaming error body cleanup")), 1_000)),
+  ]);
+  assert.equal(streamingErrorClosed, true);
 
   const originalFetch = globalThis.fetch;
   try {
