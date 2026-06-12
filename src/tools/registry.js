@@ -154,7 +154,7 @@ export const tools = {
       inputSchema: {
         type: "object",
         properties: {
-          engine: { type: "string", description: "Search engine. Allowed values: text, ast. Default: text. Use ast for ast-grep structural patterns." },
+          engine: { type: "string", enum: ["text", "ast"], description: "Search engine. Allowed values: text, ast. Default: text. Use ast for ast-grep structural patterns." },
           pattern: { type: "string", description: "Regex pattern to search for" },
           path: { type: "string", description: "File or directory to search. Default: ." },
           include: { type: "string", description: "File glob to include, for example *.js or *.{ts,tsx}" },
@@ -189,7 +189,7 @@ export const tools = {
       inputSchema: {
         type: "object",
         properties: {
-          mode: { type: "string", description: "Discovery mode. Allowed values: summary, files, tree, outline. Default: summary." },
+          mode: { type: "string", enum: ["summary", "files", "tree", "outline"], description: "Discovery mode. Allowed values: summary, files, tree, outline. Default: summary." },
           path: { type: "string", description: "File or directory path to list. Default: . For mode=outline, this must be a single source file." },
           include: { type: "string", description: "Optional JavaScript regular expression used to filter returned file paths." },
           maxFiles: { type: "integer", minimum: 1, maximum: 5000, description: "Maximum files to show. Default: 500." },
@@ -234,7 +234,7 @@ export const tools = {
         type: "object",
         properties: {
           path: { type: "string", description: "Optional file or directory pathspec to diff or filter history. Blank values are treated as omitted." },
-          mode: { type: "string", description: "Return diff hunks, compact changed-file status, or commit history. Allowed values: diff, status, history. Default: diff." },
+          mode: { type: "string", enum: ["diff", "status", "history"], description: "Return diff hunks, compact changed-file status, or commit history. Allowed values: diff, status, history. Default: diff." },
           staged: { type: "boolean", description: "Show staged changes with git diff --cached. Default: false." },
           stat: { type: "boolean", description: "Include git diff --stat before hunks. Default: true." },
           maxFiles: {
@@ -271,7 +271,7 @@ export const tools = {
       inputSchema: {
         type: "object",
         properties: {
-          mode: { type: "string", description: "Report type. Allowed values: stats, report, guidance. Default: stats." },
+          mode: { type: "string", enum: ["stats", "report", "guidance"], description: "Report type. Allowed values: stats, report, guidance. Default: stats." },
           maxEvents: { type: "integer", minimum: 1, maximum: 10000, description: "Maximum recent usage events to analyze. Default: 1000." },
           maxLines: { type: "integer", minimum: 10, maximum: 200, description: "Max lines before truncation. Default: 60." },
           maxBytes: { type: "integer", minimum: 1024, maximum: MAX_BYTES, description: "Max output bytes before truncation. Default: 32768." },

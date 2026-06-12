@@ -229,6 +229,19 @@ try {
   await writeFile(scanLimitedRangeFile, "x".repeat(4096), "utf8");
   await writeFile(dashFile, "-needle\nplain\n", "utf8");
 
+  const preInitList = await rawRequest({ jsonrpc: "2.0", id: "pre-list", method: "tools/list" });
+  assert.equal(preInitList.error.code, -32002);
+  assert.match(preInitList.error.message, /requires initialize/);
+
+  const preInitCall = await rawRequest({
+    jsonrpc: "2.0",
+    id: "pre-call",
+    method: "tools/call",
+    params: { name: "usage", arguments: {} },
+  });
+  assert.equal(preInitCall.error.code, -32002);
+  assert.match(preInitCall.error.message, /requires initialize/);
+
   const init = await request("initialize", {});
   assert.equal(init.result.serverInfo.name, "simple-context-limiter");
   const invalidInitializeParams = await request("initialize", []);
@@ -249,6 +262,18 @@ try {
   notification("unknown/notification", {});
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.deepEqual(unexpectedResponses, []);
+
+  const sideEffectName = `scl-notification-side-effect-${process.pid}.txt`;
+  const sideEffectFile = join(tmpdir(), sideEffectName);
+  await rm(sideEffectFile, { force: true });
+  const sideEffectCommand = isPowerShellConfigured()
+    ? `& ${shellQuote(process.execPath)} -e "require('node:fs').writeFileSync(require('node:path').join(require('node:os').tmpdir(),'${sideEffectName}'),'ran')"`
+    : `${shellQuote(process.execPath)} -e "require('node:fs').writeFileSync(require('node:path').join(require('node:os').tmpdir(),'${sideEffectName}'),'ran')"`;
+  notification("tools/call", { name: "run", arguments: { command: sideEffectCommand } });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(await pathExists(sideEffectFile), false);
+  assert.deepEqual(unexpectedResponses, []);
+  await rm(sideEffectFile, { force: true });
 
   const unknownMethod = await request("unknown/method", {});
   assert.equal(unknownMethod.error.code, -32601);
@@ -314,7 +339,15 @@ try {
     "usage",
   ]);
   assert.equal(listed.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
-  assert.equal(findSchemaKeyword(listed.result.tools.map((tool) => tool.inputSchema), ["oneOf", "anyOf", "allOf", "enum", "const", "not"]), undefined);
+  assert.equal(findSchemaKeyword(listed.result.tools.map((tool) => tool.inputSchema), ["oneOf", "anyOf", "allOf", "const", "not"]), undefined);
+  const searchSchema = listed.result.tools.find((tool) => tool.name === "search").inputSchema;
+  assert.deepEqual(searchSchema.properties.engine.enum, ["text", "ast"]);
+  const discoverSchema = listed.result.tools.find((tool) => tool.name === "discover").inputSchema;
+  assert.deepEqual(discoverSchema.properties.mode.enum, ["summary", "files", "tree", "outline"]);
+  const diffSchema = listed.result.tools.find((tool) => tool.name === "diff").inputSchema;
+  assert.deepEqual(diffSchema.properties.mode.enum, ["diff", "status", "history"]);
+  const usageSchema = listed.result.tools.find((tool) => tool.name === "usage").inputSchema;
+  assert.deepEqual(usageSchema.properties.mode.enum, ["stats", "report", "guidance"]);
   const readSchema = listed.result.tools.find((tool) => tool.name === "read").inputSchema;
   assert.equal(readSchema.type, "object");
   assert.equal(readSchema.anyOf, undefined);
@@ -1328,6 +1361,9 @@ try {
     for (let i = 0; i < 3; i++) {
       try { await callTool('run', { command: 'git log --oneline -1', maxLines: 20 }); } catch {}
     }
+    for (let i = 0; i < 3; i++) {
+      try { await callTool('run', { command: 'npm ls --depth=0', maxLines: 20 }); } catch {}
+    }
     await callTool('run', { command: ${JSON.stringify(isPowerShellConfigured() ? `& ${shellQuote(process.execPath)} -e "console.log('x'.repeat(50000))"` : `${shellQuote(process.execPath)} -e "console.log('x'.repeat(50000))"`)}, maxLines: 20 });
     const report = await callTool('usage', { mode: 'report', maxEvents: 20 });
     const guidance = await callTool('usage', { mode: 'guidance', maxEvents: 20 });
@@ -1351,6 +1387,11 @@ try {
   assert.match(usagePayload.text, /diff mode=history:/);
   assert.match(usagePayload.guidance, /Usage guidance/);
   assert.match(usagePayload.guidance, /diff mode=history:/);
+  assert.match(usagePayload.guidance, /run: 3 dependencies commands/);
+  assert.doesNotMatch(usagePayload.guidance, /dependencies:/);
+  assert.doesNotMatch(usagePayload.guidance, /infra_logs:/);
+  assert.doesNotMatch(usagePayload.guidance, /size_or_find:/);
+  assert.doesNotMatch(usagePayload.guidance, /search_workflow:/);
   assert.equal(usagePayload.guidanceMeta.mode, "guidance");
   assert.equal(usagePayload.meta.loggingEnabled, true);
   assert.equal(usagePayload.meta.byCommandKind.some((entry) => entry.name === "git-history"), true);

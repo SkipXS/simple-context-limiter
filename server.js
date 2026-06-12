@@ -36,7 +36,7 @@ function resultResponse(id, result) {
 }
 
 function isProtocolToolError(error) {
-  return error?.code === -32601 || error?.code === -32602;
+  return error?.code === -32601 || error?.code === -32602 || error?.code === -32002;
 }
 
 function toolErrorResult(error) {
@@ -106,6 +106,16 @@ const instructions = "Default to run, logs, read, search, discover, fetch, diff,
   + "Use native shell/read/fetch/diff tools only when you specifically need complete output, exact stderr/exit behavior, interactivity, or unsupported behavior. "
   + "Read the _meta field after each call: if truncated is true, retry with a narrower query/range or higher maxLines/maxBytes before falling back to native tools.";
 
+let initializeAccepted = false;
+let sessionInitialized = false;
+
+function requireInitialized(method) {
+  if (sessionInitialized) return;
+  const error = new Error(`${method} requires initialize followed by notifications/initialized`);
+  error.code = -32002;
+  throw error;
+}
+
 async function handleMessage(msg) {
   if (!isRequestObject(msg)) return errorResponse(null, -32600, "Invalid Request");
 
@@ -119,6 +129,7 @@ async function handleMessage(msg) {
     if (method === "initialize") {
       validateInitializeParams(params);
       if (!hasId) return undefined;
+      initializeAccepted = true;
       return resultResponse(id, {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
@@ -127,17 +138,22 @@ async function handleMessage(msg) {
       });
     }
 
-    if (method === "notifications/initialized") return undefined;
+    if (method === "notifications/initialized") {
+      if (initializeAccepted) sessionInitialized = true;
+      return undefined;
+    }
 
     if (method === "tools/list") {
+      requireInitialized(method);
       if (!hasId) return undefined;
       return resultResponse(id, tools);
     }
 
     if (method === "tools/call") {
+      requireInitialized(method);
+      if (!hasId) return undefined;
       const { name, args } = validateToolCallParams(params);
       const result = await callTool(name, args);
-      if (!hasId) return undefined;
       return resultResponse(id, result);
     }
 
