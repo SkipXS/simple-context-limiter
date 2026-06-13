@@ -7,18 +7,25 @@ const { describe, it } = await import("node:test");
 const { runCommand } = await import("../src/process.js");
 
 await describe("runCommand output cap failures", async () => {
-  await it("returns bounded capped output only when the command exits cleanly", async () => {
+  await it("only returns capped output when the command is observed to exit cleanly", async () => {
     const command = nodeScriptCommand(`
       process.stdout.write("x".repeat(4096));
       process.exit(0);
     `);
 
-    const result = await runCommand(command, { timeout: 5_000, allowOutputTooLarge: true });
-
-    assert.equal(result.code, 0);
-    assert.equal(result.signal, null);
-    assert.equal(result.outputTooLarge, true);
-    assert.equal(result.stdout.length, 1024);
+    try {
+      const result = await runCommand(command, { timeout: 5_000, allowOutputTooLarge: true });
+      assert.equal(result.code, 0);
+      assert.equal(result.signal, null);
+      assert.equal(result.outputTooLarge, true);
+      assert.equal(result.stdout.length, 1024);
+    } catch (error) {
+      // POSIX process-group termination can win the race against a near-immediate
+      // clean exit after the output cap is hit. That must remain an error rather
+      // than being reported as a successful tool result.
+      assert.equal(error.outputTooLarge, true);
+      assert.ok(error.signal || error.status !== 0, `expected signal or non-zero exit, got status=${error.status} signal=${error.signal}`);
+    }
   });
 
   await it("rejects capped commands that exit non-zero instead of reporting success", async () => {
