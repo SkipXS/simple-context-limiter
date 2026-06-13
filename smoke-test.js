@@ -657,8 +657,13 @@ try {
     : `${shellQuote(process.execPath)} -e "process.stdout.write('x'.repeat(50000))"`;
   const outputTooLargeRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
     const { callTool } = await import('./src/tools.js');
-    const result = await callTool('sc-run', { command: ${JSON.stringify(outputTooLargeCommand)}, maxLines: 200, maxBytes: 32768 });
-    console.log(JSON.stringify(result._meta));
+    const { commandErrorData } = await import('./src/process.js');
+    try {
+      const result = await callTool('sc-run', { command: ${JSON.stringify(outputTooLargeCommand)}, maxLines: 200, maxBytes: 32768 });
+      console.log(JSON.stringify({ ok: true, meta: result._meta }));
+    } catch (error) {
+      console.log(JSON.stringify({ ok: false, error: { message: error.message, data: commandErrorData(error) } }));
+    }
   `], {
     cwd: import.meta.dirname,
     timeout: 5_000,
@@ -669,13 +674,20 @@ try {
     },
   });
   assert.equal(outputTooLargeRun.code, 0, outputTooLargeRun.stderr);
-  const outputTooLargeMeta = JSON.parse(outputTooLargeRun.stdout.trim());
-  assert.equal(outputTooLargeMeta.truncated, true);
-  assert.equal(outputTooLargeMeta.outputTooLarge, true);
-  assert.equal(outputTooLargeMeta.truncation.reason, "command_output_cap");
-  assert.equal(outputTooLargeMeta.response.totalBytesKnown, false);
-  assert.ok(Object.hasOwn(outputTooLargeMeta, "exitCode") || Object.hasOwn(outputTooLargeMeta, "signal"));
-  assert.ok(outputTooLargeMeta.response.savedBytes > 0);
+  const outputTooLargePayload = JSON.parse(outputTooLargeRun.stdout.trim());
+  if (outputTooLargePayload.ok) {
+    const outputTooLargeMeta = outputTooLargePayload.meta;
+    assert.equal(outputTooLargeMeta.truncated, true);
+    assert.equal(outputTooLargeMeta.outputTooLarge, true);
+    assert.equal(outputTooLargeMeta.truncation.reason, "command_output_cap");
+    assert.equal(outputTooLargeMeta.response.totalBytesKnown, false);
+    assert.ok(Object.hasOwn(outputTooLargeMeta, "exitCode") || Object.hasOwn(outputTooLargeMeta, "signal"));
+    assert.ok(outputTooLargeMeta.response.savedBytes > 0);
+  } else {
+    assert.match(outputTooLargePayload.error.message, /output exceeded/);
+    assert.equal(outputTooLargePayload.error.data.outputTooLarge, true);
+    assert.ok(Object.hasOwn(outputTooLargePayload.error.data, "exitCode") || Object.hasOwn(outputTooLargePayload.error.data, "signal"));
+  }
 
   const invalidRunMaxLines = await request("tools/call", {
     name: "sc-run",
