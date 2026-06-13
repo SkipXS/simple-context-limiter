@@ -202,7 +202,11 @@ function formatFetchDisplayText(data) {
     ? `${compactTrace(data.url)} -> ${compactTrace(data.finalUrl)}`
     : compactTrace(data.url);
   const status = [data.status, data.statusText].filter((part) => part !== undefined && part !== "").join(" ") || "unknown status";
-  return [`Source: ${source} (${status}; cached=${Boolean(data.cached)}; htmlStripped=${Boolean(data.htmlStripped)})`, data.content].join("\n").trimEnd();
+  const notes = [];
+  if (data.htmlStripped) notes.push("HTML stripped");
+  if (data.cached) notes.push("cached");
+  const suffix = notes.length > 0 ? `${status}, ${notes.join(", ")}` : status;
+  return [`Source: ${source} (${suffix})`, data.content].join("\n").trimEnd();
 }
 
 function compactTrace(value, maxLength = 160) {

@@ -156,7 +156,7 @@ Use the separate `sc-search` tool for bounded text or AST search with optional c
 { "mode": "tree", "path": ".", "maxDepth": 3, "maxEntries": 200 }
 ```
 
-When `tree` hits `maxEntries`, it stops reading additional entries and reports omitted entries as a lower bound in `_meta.entriesOmittedLowerBound`. The shown entries are a bounded filesystem-order sample sorted for readability, not a complete alphabetic prefix of very large directories.
+`tree` always skips high-noise directories such as `.git`, `node_modules`, `.pi`, and `.opencode`, and also honors Git ignore rules best-effort via `git check-ignore` when the target is inside the current Git work tree. When `tree` hits `maxEntries`, it reports omitted entries as a lower bound in `_meta.entriesOmittedLowerBound`. The shown entries are bounded and sorted for readability, not a complete alphabetic prefix of very large directories.
 
 ```json
 { "mode": "outline", "path": "src/tools/run.js", "maxSymbols": 200 }
@@ -245,7 +245,7 @@ Large output is returned as head + tail with compact ASCII truncation markers:
 ...
 ```
 
-The response always includes `_meta.truncated`; treat it as the authoritative truncation signal. If it is `true`, `_meta.truncation` gives a compact `{ "reason", "retryHint" }` such as `format_lines`, `download_limit`, `max_files`, or `depth_limit`. Truncated responses also try to append a visible one-line retry notice so clients that hide `_meta` still give the LLM a useful next step. The LLM can re-run with a higher `maxLines` or `maxBytes`, pre-filter the command, read a narrower `sc-read` line range, or fall back to the native client tool when every line is genuinely needed.
+The response always includes `_meta.truncated`; treat it as the authoritative truncation signal. If it is `true`, `_meta.truncation` gives a compact `{ "reason", "retryHint" }` such as `format_lines`, `download_limit`, `max_files`, or `depth_limit`. Truncated responses also try to append a visible one-line retry notice when the formatter already showed a truncation marker, or a compact truncation notice otherwise, so clients that hide `_meta` still give the LLM a useful next step. The LLM can re-run with a higher `maxLines` or `maxBytes`, pre-filter the command, read a narrower `sc-read` line range, or fall back to the native client tool when every line is genuinely needed.
 
 Each tool response reports compact savings stats in `_meta.response`: `totalBytes`, `returnedBytes`, `savedBytes`, `savedPercent`, and `estimatedTokensSaved`. `_meta.response.truncated` is kept as a compatibility mirror of `_meta.truncated`, not a separate retry signal. Byte counters are not duplicated at the top level of `_meta`; top-level fields are reserved for tool-specific facts such as `durationMs`, `emptyReason`, `exitCode`, `stderrOmitted`, `stderrBytes`, `shownMatches`, or `filesChanged`. Empty/no-result responses set `_meta.empty: true` plus a compact reason such as `no_matches`, `no_output`, or `no_diff`. Token savings are approximate and use `savedBytes / 4` as a dependency-free estimate. In `sc-usage` `mode: "stats"`, top-level totals describe aggregate usage stats while formatted response savings remain in `_meta.response`.
 

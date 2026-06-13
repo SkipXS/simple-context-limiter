@@ -373,7 +373,7 @@ try {
     "sc-usage",
   ]);
   assert.equal(listed.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
-  assert.equal(findSchemaKeyword(listed.result.tools.map((tool) => tool.inputSchema), ["oneOf", "anyOf", "allOf", "const", "not"]), undefined);
+  assert.equal(findSchemaKeyword(listed.result.tools.map((tool) => tool.inputSchema), ["oneOf", "allOf", "const", "not"]), undefined);
   const runSchema = listed.result.tools.find((tool) => tool.name === "sc-run").inputSchema;
   assert.equal(runSchema.properties.maxLines.maximum, 500);
   const searchSchema = listed.result.tools.find((tool) => tool.name === "sc-search").inputSchema;
@@ -388,7 +388,7 @@ try {
   assert.deepEqual(usageSchema.properties.mode.enum, ["stats", "report", "guidance"]);
   const readSchema = listed.result.tools.find((tool) => tool.name === "sc-read").inputSchema;
   assert.equal(readSchema.type, "object");
-  assert.equal(readSchema.anyOf, undefined);
+  assert.deepEqual(readSchema.anyOf, [{ required: ["path"] }, { required: ["paths"] }]);
   assert.match(readSchema.properties.paths.description, /path is also provided/);
 
   const slowCommand = nodeEvalCommand("setTimeout(() => {}, 500)");
@@ -414,6 +414,7 @@ try {
   });
   assert.equal(legacyToolName.error.code, -32601);
   assert.match(legacyToolName.error.message, /Unknown tool/);
+  assert.match(legacyToolName.error.message, /use sc-run/);
 
   const missingToolName = await request("tools/call", { arguments: {} });
   assert.equal(missingToolName.error.code, -32602);
@@ -497,6 +498,29 @@ try {
   assert.equal(entryLimitedTree.result._meta.entriesOmittedKnown, false);
   assert.equal(entryLimitedTree.result._meta.truncated, true);
   assert.equal(entryLimitedTree.result._meta.truncation.reason, "max_entries");
+
+  if (await hasGitForTest()) {
+    const ignoredTreeDir = join(tempDir, "ignored-tree");
+    await mkdir(join(ignoredTreeDir, "ignored"), { recursive: true });
+    await mkdir(join(ignoredTreeDir, "visible"), { recursive: true });
+    await writeFile(join(ignoredTreeDir, ".gitignore"), "ignored/\n*.log\n", "utf8");
+    await writeFile(join(ignoredTreeDir, "ignored", "noise.txt"), "noise\n", "utf8");
+    await writeFile(join(ignoredTreeDir, "debug.log"), "noise\n", "utf8");
+    await writeFile(join(ignoredTreeDir, "visible", "keep.txt"), "keep\n", "utf8");
+    const gitInit = await runProcess("git", ["init"], { cwd: ignoredTreeDir, timeout: 5_000 });
+    assert.equal(gitInit.code, 0, gitInit.stderr);
+    const ignoredTreeRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
+      const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
+      const result = await callTool('sc-discover', { mode: 'tree', path: '.', maxDepth: 2, maxEntries: 20 });
+      console.log(JSON.stringify(result.content[0].text));
+    `], { cwd: ignoredTreeDir, timeout: 5_000 });
+    assert.equal(ignoredTreeRun.code, 0, ignoredTreeRun.stderr);
+    const ignoredTreeText = JSON.parse(ignoredTreeRun.stdout.trim());
+    assert.match(ignoredTreeText, /visible/);
+    assert.match(ignoredTreeText, /keep\.txt/);
+    assert.doesNotMatch(ignoredTreeText, /ignored/);
+    assert.doesNotMatch(ignoredTreeText, /debug\.log/);
+  }
 
   const repoSummary = await request("tools/call", {
     name: "sc-discover",
@@ -611,6 +635,8 @@ try {
   });
   assert.ok(byteLimitedRun.result._meta.response.returnedBytes <= 1024);
   assert.ok(byteLimitedRun.result._meta.response.savedBytes > 0);
+  assert.equal((byteLimitedRun.result.content[0].text.match(/\[truncated:/g) ?? []).length, 1);
+  assert.match(byteLimitedRun.result.content[0].text, /\[retry: retry with higher maxLines\/maxBytes/);
 
   const outputTooLargeCommand = isPowerShellConfigured()
     ? `& ${shellQuote(process.execPath)} -e "process.stdout.write('x'.repeat(50000))"`

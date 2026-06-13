@@ -128,12 +128,19 @@ function appendVisibleNotices(text, meta, maxBytes = Number.POSITIVE_INFINITY) {
   if (meta?.truncated && meta.truncation?.reason) {
     const friendlyReason = formatVisibleTruncationReason(meta.truncation.reason);
     const notice = visibleTruncationNotice(meta.truncation.reason, meta.truncation.retryHint);
-    if (!current.includes(notice) && !current.includes(`[truncated: ${meta.truncation.reason}`) && !current.includes(`[truncated: ${friendlyReason}`)) {
+    const retryNotice = visibleRetryNotice(meta.truncation.retryHint);
+    if (hasVisibleTruncationMarker(current)) {
+      if (retryNotice) current = appendBoundedNotice(current, retryNotice, meta, maxBytes);
+    } else if (!current.includes(notice) && !current.includes(`[truncated: ${meta.truncation.reason}`) && !current.includes(`[truncated: ${friendlyReason}`)) {
       current = appendBoundedNotice(current, notice, meta, maxBytes);
     }
   }
 
   return current;
+}
+
+function hasVisibleTruncationMarker(text) {
+  return /(^|\n)\[truncated:/i.test(text);
 }
 
 function visibleTruncationNotice(reason, retryHint) {
@@ -142,8 +149,14 @@ function visibleTruncationNotice(reason, retryHint) {
   return hint ? `[truncated: ${friendlyReason}; ${hint}]` : `[truncated: ${friendlyReason}]`;
 }
 
+function visibleRetryNotice(retryHint) {
+  const hint = formatVisibleRetryHint(retryHint);
+  return hint ? `[retry: ${hint}]` : "";
+}
+
 function formatVisibleTruncationReason(reason) {
   return String(reason)
+    .replaceAll("+", " and ")
     .replaceAll("_", " ")
     .replace(/\bmax files\b/g, "file limit")
     .replace(/\bmax entries\b/g, "entry limit")
@@ -175,7 +188,7 @@ function formatVisibleRetryHint(retryHint) {
 }
 
 function appendBoundedNotice(text, notice, meta, maxBytes) {
-  if (text.includes(notice)) return text;
+  if (!notice || text.includes(notice)) return text;
 
   const knownLowerBound = meta.response?.totalBytesKnown === false && Number.isFinite(meta.response?.totalBytes)
     ? meta.response.totalBytes

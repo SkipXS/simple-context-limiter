@@ -7,6 +7,7 @@ import { recordStats } from "../stats.js";
 import { formatTruncationReason, invalidParams, omission, relativePath, savingsMeta, toolTextResult, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage", ".pi", ".opencode", ".cache"]);
+const GIT_CHECK_IGNORE_CHUNK_SIZE = 100;
 
 export async function discoverTool(args) {
   const { mode = "summary" } = args ?? {};
@@ -198,40 +199,69 @@ function treeTruncationHint(state, formatted) {
 
 async function readTreeEntries(directory, maxEntries) {
   const entries = [];
-  let omitted = 0;
   const dir = await fs.promises.opendir(directory);
 
   try {
     for await (const entry of dir) {
       if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue;
-      if (entries.length >= maxEntries) {
-        omitted++;
-        break;
-      }
       entries.push(entry);
     }
   } finally {
     await dir.close().catch(() => {});
   }
 
-  entries.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
-  return { entries, omitted };
+  const visibleEntries = await filterGitIgnoredEntries(directory, entries);
+  visibleEntries.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
+  return { entries: visibleEntries.slice(0, maxEntries), omitted: Math.max(0, visibleEntries.length - maxEntries) };
+}
+
+async function filterGitIgnoredEntries(directory, entries) {
+  if (entries.length === 0) return entries;
+  const candidates = entries
+    .map((entry) => ({ entry, gitPath: gitPathForCheckIgnore(path.join(directory, entry.name)) }))
+    .filter((candidate) => candidate.gitPath !== undefined);
+  if (candidates.length === 0) return entries;
+
+  const ignored = await gitIgnoredPaths(candidates.map((candidate) => candidate.gitPath));
+  if (ignored.size === 0) return entries;
+
+  return entries.filter((entry) => {
+    const gitPath = gitPathForCheckIgnore(path.join(directory, entry.name));
+    return gitPath === undefined || !ignored.has(gitPath);
+  });
+}
+
+function gitPathForCheckIgnore(filePath) {
+  const relative = path.relative(process.cwd(), filePath);
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return undefined;
+  return relative.replaceAll(path.sep, "/");
+}
+
+async function gitIgnoredPaths(gitPaths) {
+  const ignored = new Set();
+  for (let index = 0; index < gitPaths.length; index += GIT_CHECK_IGNORE_CHUNK_SIZE) {
+    const chunk = gitPaths.slice(index, index + GIT_CHECK_IGNORE_CHUNK_SIZE);
+    try {
+      const result = await runProcess("git", ["check-ignore", "--", ...chunk], { cwd: process.cwd(), timeout: 10_000 });
+      if (result.code === 0) {
+        for (const line of result.stdout.split("\n").filter(Boolean)) ignored.add(line.replaceAll(path.sep, "/"));
+      } else if (result.code !== 1) {
+        return ignored;
+      }
+    } catch {
+      return ignored;
+    }
+  }
+  return ignored;
 }
 
 async function hasVisibleTreeChildren(directory) {
-  let dir;
   try {
-    dir = await fs.promises.opendir(directory);
-    for await (const entry of dir) {
-      if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue;
-      return true;
-    }
+    const { entries } = await readTreeEntries(directory, 1);
+    return entries.length > 0;
   } catch {
     return false;
-  } finally {
-    await dir?.close().catch(() => {});
   }
-  return false;
 }
 
 async function summaryMode(args) {

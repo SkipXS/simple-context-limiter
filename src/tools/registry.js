@@ -152,6 +152,7 @@ export const tools = {
             description: "For paths: max combined response lines. Default: 200.",
           },
         },
+        anyOf: [{ required: ["path"] }, { required: ["paths"] }],
       },
     },
     {
@@ -199,10 +200,10 @@ export const tools = {
           mode: { type: "string", enum: ["summary", "files", "tree", "outline"], description: "Discovery mode. Default: summary." },
           path: { type: "string", description: "File or directory path to list. Default: . For mode=outline, this must be a single source file." },
           include: { type: "string", description: "Optional JavaScript regular expression used to filter returned file paths." },
-          maxFiles: { type: "integer", minimum: 1, maximum: 5000, description: "Maximum files to show. Default: 500." },
-          maxDepth: { type: "integer", minimum: 1, maximum: 10, description: "Maximum directory depth. Default: 3." },
-          maxEntries: { type: "integer", minimum: 1, maximum: 2000, description: "Maximum entries to show. Default: 200." },
-          maxSymbols: { type: "integer", minimum: 1, maximum: 1000, description: "Maximum outline entries to show. Default: 200." },
+          maxFiles: { type: "integer", minimum: 1, maximum: 5000, description: "files mode only: maximum files to show. Default: 500." },
+          maxDepth: { type: "integer", minimum: 1, maximum: 10, description: "tree mode only: maximum directory depth. Default: 3." },
+          maxEntries: { type: "integer", minimum: 1, maximum: 2000, description: "tree mode only: maximum entries to show. Default: 200." },
+          maxSymbols: { type: "integer", minimum: 1, maximum: 1000, description: "outline mode only: maximum symbols to show. Default: 200." },
           maxLines: { type: "integer", minimum: 10, maximum: 500, description: "Max output lines before truncation. Default: 60." },
           maxBytes: { type: "integer", minimum: 1024, maximum: MAX_BYTES, description: "Max output bytes before truncation. Default: 32768." },
         },
@@ -248,19 +249,19 @@ export const tools = {
             type: "integer",
             minimum: 1,
             maximum: 100,
-            description: "Maximum changed files with hunks to show. Also accepted as legacy commit limit for mode=history. Default: 20.",
+            description: "diff mode only: maximum changed files with hunks to show. For history, prefer maxCommits. Default: 20.",
           },
           maxCommits: {
             type: "integer",
             minimum: 1,
             maximum: 100,
-            description: "Maximum commits for mode=history. Default: 20.",
+            description: "history mode only: maximum commits to show. Default: maxFiles for legacy compatibility, otherwise 20.",
           },
           maxHunks: {
             type: "integer",
             minimum: 1,
             maximum: 200,
-            description: "Maximum diff hunks to show. Default: 20.",
+            description: "diff mode only: maximum diff hunks to show. Default: 20.",
           },
           maxLines: {
             type: "integer",
@@ -312,6 +313,10 @@ for (const tool of tools.tools) {
 
 const inputSchemas = new Map(tools.tools.map((tool) => [tool.name, tool.inputSchema]));
 
+function suggestedPrefixedToolName(name) {
+  return typeof name === "string" && Object.hasOwn(handlers, name) ? `${TOOL_PREFIX}${name}` : undefined;
+}
+
 function validateKnownArgs(name, args) {
   if (!args || typeof args !== "object" || Array.isArray(args)) return;
   const allowed = new Set(Object.keys(inputSchemas.get(name)?.properties ?? {}));
@@ -337,7 +342,8 @@ export async function callTool(name, args) {
       return result;
     }
 
-    error = new Error(`Unknown tool: ${name}`);
+    const suggestion = suggestedPrefixedToolName(name);
+    error = new Error(suggestion ? `Unknown tool: ${name}. Tool names are prefixed; use ${suggestion}.` : `Unknown tool: ${name}`);
     error.code = -32601;
     throw error;
   } catch (caught) {
