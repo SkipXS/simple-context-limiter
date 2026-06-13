@@ -28,9 +28,7 @@ await describe("server backpressure", async () => {
       send(server, { jsonrpc: "2.0", id: "init", method: "initialize", params: { protocolVersion: "2024-11-05" } });
       await waitForResponse(stdoutLines, "init");
       send(server, { jsonrpc: "2.0", method: "notifications/initialized" });
-      send(server, { jsonrpc: "2.0", id: "ready-barrier", method: "tools/list" });
-      const ready = await waitForResponse(stdoutLines, "ready-barrier", 2_000);
-      assert.ok(ready.result?.tools?.length > 0, `server did not initialize: ${JSON.stringify(ready)}`);
+      await waitForToolsReady(server, stdoutLines, 2_000);
 
       send(server, {
         jsonrpc: "2.0",
@@ -119,6 +117,33 @@ await describe("server backpressure", async () => {
 
 function send(server, message) {
   server.stdin.write(`${JSON.stringify(message)}\n`);
+}
+
+async function waitForToolsReady(server, stdoutLines, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let attempt = 0;
+
+  for (;;) {
+    const id = `ready-barrier-${attempt++}`;
+    send(server, { jsonrpc: "2.0", id, method: "tools/list" });
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error("Timed out waiting for tools/list readiness");
+
+    let response;
+    try {
+      response = await waitForResponse(stdoutLines, id, Math.min(250, remaining));
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+      continue;
+    }
+
+    if (response.result?.tools?.length > 0) return response;
+    if (response.error?.code !== -32003 && response.error?.code !== -32002) {
+      throw new Error(`server did not initialize: ${JSON.stringify(response)}`);
+    }
+    if (Date.now() >= deadline) throw new Error(`server did not initialize: ${JSON.stringify(response)}`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 function collectJsonLines(stream) {
