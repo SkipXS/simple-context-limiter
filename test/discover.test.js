@@ -96,7 +96,7 @@ async function withTempProject(callback) {
   const previousCwd = process.cwd();
   try {
     process.chdir(dir);
-    return await callback(dir);
+    return await callback(process.cwd());
   } finally {
     process.chdir(previousCwd);
     await fs.rm(dir, { recursive: true, force: true });
