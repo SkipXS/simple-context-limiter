@@ -127,7 +127,7 @@ async function statusTool(diffPath, staged, maxLines, maxBytes) {
   const lines = result.stdout.trimEnd().split("\n").filter(Boolean)
     .filter((line) => staged ? line[0] !== " " : line[1] !== " ")
     .map(formatStatusLine);
-  const text = lines.join("\n") || "(no changed files)";
+  const text = lines.join("\n") || "(no tracked changed files; untracked files excluded)";
   const formatted = formatOutput(text, maxLines, maxBytes);
   const meta = withResponseMeta({
     mode: "status",
@@ -144,7 +144,7 @@ async function statusTool(diffPath, staged, maxLines, maxBytes) {
     truncated: formatted.truncated,
     ...truncationMeta(formatted.truncated, formatTruncationReason(formatted, maxLines, maxBytes), "Increase maxLines/maxBytes."),
     empty: lines.length === 0,
-    emptyReason: lines.length === 0 ? "no_changed_files" : undefined,
+    emptyReason: lines.length === 0 ? "no_tracked_changed_files" : undefined,
     durationMs: Date.now() - started,
   });
   await recordStats("diff", meta);

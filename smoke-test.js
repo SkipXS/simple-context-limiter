@@ -565,6 +565,7 @@ try {
     },
   });
   assert.match(stdoutWithStderr.result.content[0].text, /stdout-ok/);
+  assert.match(stdoutWithStderr.result.content[0].text, /\[stderr omitted: \d+ bytes; use logs for diagnostics\]/);
   assert.doesNotMatch(stdoutWithStderr.result.content[0].text, /stderr-noise/);
   assert.equal(stdoutWithStderr.result._meta.stderrOmitted, true);
   assert.ok(stdoutWithStderr.result._meta.stderrBytes > 0);
@@ -1095,7 +1096,7 @@ try {
     assert.equal(grepContext.result._meta.shownMatches, 3);
     assert.equal(grepContext.result._meta.totalMatchesKnown, false);
     assert.equal(grepContext.result._meta.truncation.reason, "match_limit");
-    assert.match(grepContext.result.content[0].text, /\[truncated after 3 shown matches; more matches exist\]/);
+    assert.match(grepContext.result.content[0].text, /\[truncated: match_limit; 3 matches shown; more exist; narrow path\/include or raise maxMatches\]/);
 
     const limitedContext = await request("tools/call", {
       name: "search",
@@ -1108,7 +1109,7 @@ try {
     assert.doesNotMatch(limitedContext.result.content[0].text, /before-two-a/);
     assert.doesNotMatch(limitedContext.result.content[0].text, /before-two-b/);
     assert.doesNotMatch(limitedContext.result.content[0].text, /match-two/);
-    assert.match(limitedContext.result.content[0].text, /\[truncated after 1 shown matches; more matches exist\]/);
+    assert.match(limitedContext.result.content[0].text, /\[truncated: match_limit; 1 matches shown; more exist; narrow path\/include or raise maxMatches\]/);
 
     const byteLimitedSearch = await request("tools/call", {
       name: "search",
@@ -1265,7 +1266,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
   assert.match(fakeAstPayload.text, /src\/example\.ts:5:3: target\(\)/);
   assert.match(fakeAstPayload.text, /> 5: target\(\);/);
   assert.match(fakeAstPayload.text, / 4: before\(\);/);
-  assert.match(fakeAstPayload.text, /\[truncated after 1 shown matches; more matches exist\]/);
+  assert.match(fakeAstPayload.text, /\[truncated: match_limit; 1 matches shown; more exist; narrow path\/include or raise maxMatches\]/);
 
   const missingAstGrepRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
     const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
@@ -1534,11 +1535,11 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
     assert.equal(diffPayload.history.meta.mode, "history");
     assert.equal(diffPayload.history.meta.commitsShown, 1);
     assert.equal(diffPayload.history.meta.maxCommits, 5);
-    assert.equal(diffPayload.noStagedStatus.text, "(no changed files)");
+    assert.equal(diffPayload.noStagedStatus.text, "(no tracked changed files; untracked files excluded)");
     assert.equal(diffPayload.noStagedStatus.meta.staged, true);
     assert.equal(diffPayload.noStagedStatus.meta.changedFiles, 0);
     assert.equal(diffPayload.noStagedStatus.meta.empty, true);
-    assert.equal(diffPayload.noStagedStatus.meta.emptyReason, "no_changed_files");
+    assert.equal(diffPayload.noStagedStatus.meta.emptyReason, "no_tracked_changed_files");
     assert.equal(diffPayload.noStagedDiff.text, "(no diff)");
     assert.equal(diffPayload.noStagedDiff.meta.staged, true);
     assert.equal(diffPayload.noStagedDiff.meta.truncated, false);

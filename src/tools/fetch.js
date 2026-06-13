@@ -170,7 +170,8 @@ export async function fetchTool(args) {
   const byteLimit = validateInteger(maxBytes, "fetch maxBytes", 1024, MAX_BYTES);
 
   const data = await fetchUrl(url, force);
-  const formatted = formatOutput(data.content, lineLimit, byteLimit);
+  const responseByteLimit = Math.min(byteLimit, MAX_FETCH_BYTES);
+  const formatted = formatOutput(formatFetchDisplayText(data), lineLimit, responseByteLimit);
   const truncated = formatted.truncated || data.limited;
   const meta = withResponseMeta({
     totalLines: formatted.totalLines,
@@ -193,5 +194,20 @@ export async function fetchTool(args) {
   });
   await recordStats("fetch", meta);
 
-  return toolTextResult(formatted.text, meta, Math.min(byteLimit, MAX_FETCH_BYTES));
+  return toolTextResult(formatted.text, meta, responseByteLimit);
+}
+
+function formatFetchDisplayText(data) {
+  const source = data.finalUrl && data.finalUrl !== data.url
+    ? `${compactTrace(data.url)} -> ${compactTrace(data.finalUrl)}`
+    : compactTrace(data.url);
+  const status = [data.status, data.statusText].filter((part) => part !== undefined && part !== "").join(" ") || "unknown status";
+  return [`Source: ${source} (${status}; cached=${Boolean(data.cached)}; htmlStripped=${Boolean(data.htmlStripped)})`, data.content].join("\n").trimEnd();
+}
+
+function compactTrace(value, maxLength = 160) {
+  if (typeof value !== "string" || value.length <= maxLength) return value;
+  const tailLength = Math.min(32, Math.floor(maxLength * 0.25));
+  const headLength = maxLength - tailLength - 3;
+  return `${value.slice(0, headLength)}...${value.slice(-tailLength)}`;
 }

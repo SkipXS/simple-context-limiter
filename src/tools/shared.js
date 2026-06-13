@@ -111,25 +111,40 @@ export function savingsForText(originalText, returnedText) {
 }
 
 export function toolTextResult(text, meta, maxBytes) {
-  const finalText = appendVisibleTruncationNotice(text, meta, maxBytes);
+  const finalText = appendVisibleNotices(text, meta, maxBytes);
   return {
     content: [{ type: "text", text: finalText }],
     _meta: finalText === text ? meta : updateReturnedBytes(meta, finalText),
   };
 }
 
-function appendVisibleTruncationNotice(text, meta, maxBytes = Number.POSITIVE_INFINITY) {
-  if (!meta?.truncated || !meta.truncation?.reason) return text;
+function appendVisibleNotices(text, meta, maxBytes = Number.POSITIVE_INFINITY) {
+  let current = text;
 
-  const hint = meta.truncation.retryHint ? `; ${meta.truncation.retryHint}` : "";
-  const notice = `[truncated: ${meta.truncation.reason}${hint}]`;
+  if (meta?.stderrOmitted && Number.isFinite(meta.stderrBytes)) {
+    current = appendBoundedNotice(current, `[stderr omitted: ${meta.stderrBytes} bytes; use logs for diagnostics]`, meta, maxBytes);
+  }
+
+  if (meta?.truncated && meta.truncation?.reason) {
+    const reasonPrefix = `[truncated: ${meta.truncation.reason}`;
+    if (!current.includes(reasonPrefix)) {
+      const hint = meta.truncation.retryHint ? `; ${meta.truncation.retryHint}` : "";
+      current = appendBoundedNotice(current, `[truncated: ${meta.truncation.reason}${hint}]`, meta, maxBytes);
+    }
+  }
+
+  return current;
+}
+
+function appendBoundedNotice(text, notice, meta, maxBytes) {
   if (text.includes(notice)) return text;
 
   const knownLowerBound = meta.response?.totalBytesKnown === false && Number.isFinite(meta.response?.totalBytes)
     ? meta.response.totalBytes
     : Number.POSITIVE_INFINITY;
   const effectiveMaxBytes = Math.min(maxBytes, knownLowerBound);
-  const candidate = `${text}\n${notice}`;
+  const separator = text.endsWith("\n") ? "" : "\n";
+  const candidate = `${text}${separator}${notice}`;
   return Buffer.byteLength(candidate, "utf8") <= effectiveMaxBytes ? candidate : text;
 }
 

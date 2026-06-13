@@ -255,7 +255,7 @@ function normalizeRgMatchLine(line) {
 }
 
 function truncatedMatchesLine(shownMatches) {
-  return `[truncated after ${shownMatches} shown matches; more matches exist]`;
+  return `[truncated: match_limit; ${shownMatches} matches shown; more exist; narrow path/include or raise maxMatches]`;
 }
 
 function searchTruncationReason({ matchLimited, result, formatted, maxLines, maxBytes }) {

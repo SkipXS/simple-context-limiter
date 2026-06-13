@@ -22,7 +22,7 @@ simple-context-limiter is intended for trusted local MCP clients. The `run` tool
 ### `run`
 
 Runs a shell command and returns stdout. Output is automatically truncated when it exceeds 60 lines or 32 KB. Override with `maxLines` or `maxBytes` per call.
-Commands that exit successfully but write diagnostics to stderr will not include stderr in `run`; use `logs` when stderr or mixed command output matters. In that case `_meta.stderrOmitted: true` and `_meta.stderrBytes` report that stderr existed without leaking its text.
+Commands that exit successfully but write diagnostics to stderr will not include stderr in `run`; use `logs` when stderr or mixed command output matters. In that case the response appends `[stderr omitted: ...]`, and `_meta.stderrOmitted: true` plus `_meta.stderrBytes` report that stderr existed without leaking its text.
 
 ```json
 { "command": "find . -name '*.ts'", "maxLines": 100, "maxBytes": 16384, "timeoutMs": 120000 }
@@ -187,7 +187,7 @@ Fetches an `http` or `https` URL, strips HTML to readable text, caches the resul
 { "url": "https://example.com/docs", "force": false, "maxLines": 100, "maxBytes": 16384 }
 ```
 
-Downloads are capped at 10 MB by default before parsing/caching. Override with `SIMPLE_CONTEXT_LIMITER_MAX_FETCH_BYTES` if needed. `_meta` includes low-token traceability fields such as `url`, `finalUrl`, `status`, `contentType`, `cached`, `htmlStripped`, and `durationMs`.
+Downloads are capped at 10 MB by default before parsing/caching. Override with `SIMPLE_CONTEXT_LIMITER_MAX_FETCH_BYTES` if needed. The visible response starts with a compact `Source: ...` line; `_meta` also includes low-token traceability fields such as `url`, `finalUrl`, `status`, `contentType`, `cached`, `htmlStripped`, and `durationMs`.
 Non-HTTP schemes are blocked by default. Set `SIMPLE_CONTEXT_LIMITER_ALLOW_NON_HTTP_FETCH=1` if you explicitly need schemes such as `data:` for local testing.
 HTTP(S) fetches are not restricted to public internet hosts. `fetch` can access `localhost`, private network addresses, and other HTTP services reachable from the machine running the MCP server. Only enable simple-context-limiter for agents you trust with that local access.
 
