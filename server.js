@@ -2,13 +2,32 @@
 
 import { MAX_RPC_BATCH_CONCURRENCY, MAX_RPC_BATCH_SIZE, MAX_RPC_LINE_BYTES, MAX_RPC_PENDING_REQUESTS, MAX_RPC_TOOL_CONCURRENCY, MAX_RPC_TOOL_QUEUE, SERVER_NAME, SERVER_VERSION } from "./src/constants.js";
 import { tools, callTool } from "./src/tools.js";
-import { commandErrorData, errorData } from "./src/process.js";
+import { commandErrorData, errorData, terminateActiveChildren } from "./src/process.js";
 
 const PROTOCOL_VERSION = "2024-11-05";
 const OVERLOAD_ERROR_CODE = -32003;
 
+let shuttingDown = false;
+let shutdownTimer;
+
+function beginShutdown(reason = "shutdown") {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try {
+    process.stderr.write(`[${SERVER_NAME}] shutting down: ${reason}\n`);
+  } catch {
+    // Ignore logging errors during teardown.
+  }
+  void terminateActiveChildren().catch(() => {});
+  shutdownTimer = setTimeout(() => process.exit(0), 1_000);
+  shutdownTimer.unref?.();
+}
+
 function handleStdoutError(error) {
-  if (error?.code === "EPIPE" || error?.code === "ERR_STREAM_DESTROYED") process.exit(0);
+  if (error?.code === "EPIPE" || error?.code === "ERR_STREAM_DESTROYED") {
+    beginShutdown("stdout closed");
+    process.exit(0);
+  }
   throw error;
 }
 
@@ -203,6 +222,23 @@ async function handleMessage(msg) {
       return undefined;
     }
 
+    if (method === "shutdown") {
+      if (!hasId) return undefined;
+      beginShutdown("json-rpc shutdown");
+      return resultResponse(id, null);
+    }
+
+    if (method === "notifications/exit") {
+      beginShutdown("json-rpc exit notification");
+      setImmediate(() => process.exit(0));
+      return undefined;
+    }
+
+    if (shuttingDown) {
+      if (!hasId) return undefined;
+      return errorResponse(id, -32000, "Server is shutting down");
+    }
+
     if (method === "tools/list") {
       requireInitialized(method);
       if (!hasId) return undefined;
@@ -379,6 +415,21 @@ process.stdin.on("data", (chunk) => {
 
 process.stdin.on("end", () => {
   if (lineBytes > 0 || discardingLine) finishLine();
+  beginShutdown("stdin end");
 });
+
+process.stdin.on("close", () => {
+  beginShutdown("stdin close");
+});
+
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+  try {
+    process.on(signal, () => beginShutdown(signal));
+  } catch {
+    // Some platforms do not support all signals.
+  }
+}
+
+process.on("disconnect", () => beginShutdown("parent disconnect"));
 
 process.stderr.write(`[${SERVER_NAME} v${SERVER_VERSION}] ready (stdio)\n`);

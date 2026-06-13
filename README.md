@@ -311,7 +311,7 @@ Add this to your project `opencode.json` or global `~/.config/opencode/opencode.
   "mcp": {
     "simple-context-limiter": {
       "type": "local",
-      "command": ["npx", "-y", "github:SkipXS/simple-context-limiter#v1.1.0"],
+      "command": ["npx", "-y", "github:SkipXS/simple-context-limiter#main"],
       "env": {
         "SIMPLE_CONTEXT_LIMITER_SHELL": "bash"
       }
@@ -333,7 +333,7 @@ Add this to `~/.pi/agent/mcp.json`:
   "mcpServers": {
     "simple-context-limiter": {
       "command": "npx",
-      "args": ["-y", "github:SkipXS/simple-context-limiter#v1.1.0"],
+      "args": ["-y", "github:SkipXS/simple-context-limiter#main"],
       "env": {
         "SIMPLE_CONTEXT_LIMITER_SHELL": "bash"
       },
@@ -346,6 +346,24 @@ Add this to `~/.pi/agent/mcp.json`:
 
 Then `/reload` in Pi or restart Pi.
 
+If you prefer to avoid `npx` wrapper layers entirely, you can instead use direct invocation from a local checkout:
+
+```json
+{
+  "mcpServers": {
+    "simple-context-limiter": {
+      "command": "node",
+      "args": ["C:/path/to/simple-context-limiter/server.js"],
+      "env": {
+        "SIMPLE_CONTEXT_LIMITER_SHELL": "bash"
+      },
+      "directTools": true,
+      "lifecycle": "lazy"
+    }
+  }
+}
+```
+
 On Windows with Git for Windows, use the full path if `bash` is not on `PATH`:
 
 ```json
@@ -357,7 +375,7 @@ On Windows with Git for Windows, use the full path if `bash` is not on `PATH`:
 ### Claude Code
 
 ```bash
-claude mcp add simple-context-limiter -- npx -y github:SkipXS/simple-context-limiter#v1.1.0
+claude mcp add simple-context-limiter -- npx -y github:SkipXS/simple-context-limiter#main
 ```
 
 If you need a specific command shell for `sc-run`, set `SIMPLE_CONTEXT_LIMITER_SHELL` in the environment that starts Claude Code.
@@ -377,19 +395,21 @@ npm run audit
 
 ## Version Pinning
 
-Prefer a published npm version or immutable Git tag in client configs so all team members run the same server. The examples above pin the GitHub source to `#v1.1.0`; update that tag intentionally during upgrades. For local development or quick testing you can omit the tag and use `github:SkipXS/simple-context-limiter`, but that follows the default branch and is not reproducible. If you install from npm, use the same pattern with an explicit version, for example `simple-context-limiter@1.1.0`.
+The examples above use GitHub `npx` with `#main` so clients pick up updates from the repository without maintaining a local checkout. For reproducible team setups, replace `#main` with an immutable Git tag such as `#v1.1.0`, or use a published npm version such as `simple-context-limiter@1.1.0`.
 
-OpenCode command:
-
-```json
-["npx", "-y", "github:SkipXS/simple-context-limiter#v1.1.0"]
-```
-
-For Pi:
+OpenCode command using GitHub main:
 
 ```json
-"args": ["-y", "github:SkipXS/simple-context-limiter#v1.1.0"]
+["npx", "-y", "github:SkipXS/simple-context-limiter#main"]
 ```
+
+For Pi using GitHub main:
+
+```json
+"args": ["-y", "github:SkipXS/simple-context-limiter#main"]
+```
+
+Avoid omitting the ref entirely (`github:SkipXS/simple-context-limiter`) in long-running or concurrent MCP setups: it follows npm/GitHub defaults implicitly and is less explicit than choosing either `#main` for auto-updates or a version tag for reproducibility. On Windows, GitHub `npx` still adds wrapper layers, so keep `lifecycle: "lazy"` and rely on the server's explicit MCP shutdown handling.
 
 ## Environment Variables
 

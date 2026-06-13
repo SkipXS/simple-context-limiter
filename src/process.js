@@ -5,6 +5,20 @@ import { StringDecoder } from "node:string_decoder";
 import { COMMAND_SHELL, DEFAULT_COMMAND_TIMEOUT_MS, MAX_COMMAND_BYTES } from "./constants.js";
 import { formatOutput } from "./output.js";
 
+const activeChildren = new Set();
+
+function trackChild(child) {
+  activeChildren.add(child);
+  const remove = () => activeChildren.delete(child);
+  child.once("close", remove);
+  child.once("error", remove);
+  return child;
+}
+
+export async function terminateActiveChildren() {
+  await Promise.allSettled([...activeChildren].map((child) => terminateChild(child)));
+}
+
 function spawnTarget(file, args, options = {}) {
   if (options.windowsCommandShim && process.platform === "win32") {
     const npmShim = resolveNpmCommandShim(file);
@@ -173,14 +187,14 @@ export async function runProcess(file, args, options = {}) {
   return await new Promise((resolve, reject) => {
     const started = Date.now();
     const target = spawnTarget(file, args, options);
-    const child = spawn(target.file, target.args, {
+    const child = trackChild(spawn(target.file, target.args, {
       cwd: options.cwd,
       env: options.env,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
       detached: process.platform !== "win32",
-    });
+    }));
 
     const stdout = [];
     const stderr = [];
@@ -214,12 +228,12 @@ export async function runProcess(file, args, options = {}) {
 export async function runCommandResult(command, options = {}) {
   return await new Promise((resolve, reject) => {
     const started = Date.now();
-    const child = spawn(command, {
+    const child = trackChild(spawn(command, {
       shell: COMMAND_SHELL,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
       detached: process.platform !== "win32",
-    });
+    }));
 
     const stdout = [];
     const stderr = [];
@@ -290,13 +304,13 @@ export async function runProcessLines(file, args, options = {}) {
   return await new Promise((resolve, reject) => {
     const started = Date.now();
     const target = spawnTarget(file, args, options);
-    const child = spawn(target.file, target.args, {
+    const child = trackChild(spawn(target.file, target.args, {
       cwd: options.cwd,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
       detached: process.platform !== "win32",
-    });
+    }));
 
     const maxLines = options.maxLines ?? 100;
     const maxBytes = options.maxBytes ?? MAX_COMMAND_BYTES;
