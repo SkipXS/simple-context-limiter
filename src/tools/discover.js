@@ -4,7 +4,7 @@ import { MAX_BYTES, MAX_LINES, MAX_READ_BYTES } from "../constants.js";
 import { decodeUtf8, formatOutput } from "../output.js";
 import { runProcess, runProcessLines } from "../process.js";
 import { recordStats } from "../stats.js";
-import { invalidParams, omission, relativePath, savingsMeta, validateInteger, withResponseMeta } from "./shared.js";
+import { formatTruncationReason, invalidParams, omission, relativePath, savingsMeta, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage"]);
 
@@ -44,6 +44,7 @@ async function filesMode(args) {
     ? [...shown, omission("files", filtered.length - shown.length)].join("\n")
     : shown.join("\n") || "(no files)";
   const formatted = formatOutput(text, lineLimit, byteLimit);
+  const truncated = limited || filtered.length > shown.length || formatted.truncated;
   const meta = withResponseMeta({
     mode: "files",
     path: path.resolve(inputPath),
@@ -54,7 +55,8 @@ async function filesMode(args) {
     totalLines: formatted.totalLines,
     totalBytes: formatted.totalBytes,
     ...savingsMeta(formatted),
-    truncated: limited || filtered.length > shown.length || formatted.truncated,
+    truncated,
+    ...truncationMeta(truncated, limited || filtered.length > shown.length ? "max_files" : formatTruncationReason(formatted, lineLimit, byteLimit), limited || filtered.length > shown.length ? "Increase maxFiles or narrow include/path." : "Increase maxLines/maxBytes."),
     empty: filtered.length === 0,
     emptyReason: filtered.length === 0 ? "no_files" : undefined,
     durationMs: Date.now() - started,
@@ -130,6 +132,7 @@ async function treeMode(args) {
   if (state.omitted > 0) lines.push(omission("entries", state.omitted));
 
   const formatted = formatOutput(lines.join("\n"), lineLimit, byteLimit);
+  const truncated = state.omitted > 0 || state.depthLimited || formatted.truncated;
   const meta = withResponseMeta({
     mode: "tree",
     root,
@@ -139,10 +142,11 @@ async function treeMode(args) {
     entriesOmittedLowerBound: state.omitted,
     entriesOmittedKnown: state.omitted === 0,
     depthLimited: state.depthLimited,
+    ...truncationMeta(truncated, treeTruncationReason(state, formatted, lineLimit, byteLimit), treeTruncationHint(state, formatted)),
     totalLines: formatted.totalLines,
     totalBytes: formatted.totalBytes,
     ...savingsMeta(formatted),
-    truncated: state.omitted > 0 || state.depthLimited || formatted.truncated,
+    truncated,
     durationMs: Date.now() - started,
   });
   await recordStats("discover", meta);
@@ -165,10 +169,31 @@ async function appendTree(directory, prefix, depth, maxDepth, maxEntries, state,
     lines.push(`${prefix}${last ? "└──" : "├──"} ${entry.name}${entry.isDirectory() ? "/" : ""}`);
     state.entries++;
     if (entry.isDirectory()) {
-      if (depth >= maxDepth) state.depthLimited = true;
-      else await appendTree(path.join(directory, entry.name), `${prefix}${last ? "    " : "│   "}`, depth + 1, maxDepth, maxEntries, state, lines);
+      const childPrefix = `${prefix}${last ? "    " : "│   "}`;
+      if (depth >= maxDepth) {
+        const hasChildren = await hasVisibleTreeChildren(path.join(directory, entry.name));
+        if (hasChildren) {
+          state.depthLimited = true;
+          lines.push(`${childPrefix}└── ${omission("children beyond maxDepth")}`);
+        }
+      } else {
+        await appendTree(path.join(directory, entry.name), childPrefix, depth + 1, maxDepth, maxEntries, state, lines);
+      }
     }
   }
+}
+
+function treeTruncationReason(state, formatted, maxLines, maxBytes) {
+  if (state.omitted > 0) return "max_entries";
+  if (state.depthLimited) return "depth_limit";
+  return formatTruncationReason(formatted, maxLines, maxBytes);
+}
+
+function treeTruncationHint(state, formatted) {
+  if (state.omitted > 0) return "Increase maxEntries or pass a narrower path.";
+  if (state.depthLimited) return "Increase maxDepth.";
+  if (formatted.truncated) return "Increase maxLines/maxBytes.";
+  return undefined;
 }
 
 async function readTreeEntries(directory, maxEntries) {
@@ -191,6 +216,22 @@ async function readTreeEntries(directory, maxEntries) {
 
   entries.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
   return { entries, omitted };
+}
+
+async function hasVisibleTreeChildren(directory) {
+  let dir;
+  try {
+    dir = await fs.promises.opendir(directory);
+    for await (const entry of dir) {
+      if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue;
+      return true;
+    }
+  } catch {
+    return false;
+  } finally {
+    await dir?.close().catch(() => {});
+  }
+  return false;
 }
 
 async function summaryMode(args) {
@@ -226,7 +267,7 @@ async function summaryMode(args) {
   } catch {}
 
   const formatted = formatOutput(lines.join("\n"), lineLimit, byteLimit);
-  const meta = withResponseMeta({ mode: "summary", root, relativeRoot: relativePath(root), totalLines: formatted.totalLines, totalBytes: formatted.totalBytes, ...savingsMeta(formatted), truncated: formatted.truncated, durationMs: Date.now() - started });
+  const meta = withResponseMeta({ mode: "summary", root, relativeRoot: relativePath(root), totalLines: formatted.totalLines, totalBytes: formatted.totalBytes, ...savingsMeta(formatted), truncated: formatted.truncated, ...truncationMeta(formatted.truncated, formatTruncationReason(formatted, lineLimit, byteLimit), "Increase maxLines/maxBytes."), durationMs: Date.now() - started });
   await recordStats("discover", meta);
 
   return { content: [{ type: "text", text: formatted.text }], _meta: meta };
@@ -294,6 +335,7 @@ async function outlineMode(args) {
   const symbols = outline.slice(0, symbolLimit);
   const output = symbols.length > 0 ? symbols.join("\n") : "(no outline symbols found)";
   const formatted = formatOutput(output, lineLimit, byteLimit);
+  const truncated = outline.length > symbols.length || formatted.truncated;
   const meta = withResponseMeta({
     mode: "outline",
     path: resolved,
@@ -304,7 +346,8 @@ async function outlineMode(args) {
     totalLines: formatted.totalLines,
     totalBytes: formatted.totalBytes,
     ...savingsMeta(formatted),
-    truncated: outline.length > symbols.length || formatted.truncated,
+    truncated,
+    ...truncationMeta(truncated, outline.length > symbols.length ? "max_symbols" : formatTruncationReason(formatted, lineLimit, byteLimit), outline.length > symbols.length ? "Increase maxSymbols." : "Increase maxLines/maxBytes."),
     empty: outline.length === 0,
     emptyReason: outline.length === 0 ? "no_symbols" : undefined,
     durationMs: Date.now() - started,
@@ -315,16 +358,43 @@ async function outlineMode(args) {
 }
 
 function extractOutline(text) {
-  const patterns = [
-    /^\s*import\s.+/,
+  const importPattern = /^\s*import\s.+/;
+  const topLevelPatterns = [
     /^\s*export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+([\w$]+)/,
     /^\s*(?:export\s+)?(?:async\s+)?function\s+([\w$]+)/,
     /^\s*(?:export\s+)?class\s+([\w$]+)/,
     /^\s*(?:export\s+)?(?:const|let|var)\s+([\w$]+)\s*=/,
   ];
   const symbols = [];
+  let braceDepth = 0;
+
   for (const [index, line] of text.split("\n").entries()) {
-    if (patterns.some((pattern) => pattern.test(line))) symbols.push(`${index + 1}: ${line.trim()}`);
+    const depthBeforeLine = braceDepth;
+    if (importPattern.test(line) || (depthBeforeLine === 0 && topLevelPatterns.some((pattern) => pattern.test(line)))) {
+      symbols.push(`${index + 1}: ${line.trim()}`);
+    }
+    braceDepth = Math.max(0, braceDepth + braceDelta(line));
   }
   return symbols;
+}
+
+function braceDelta(line) {
+  let delta = 0;
+  let quote;
+  let escaped = false;
+  for (const char of line) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote) {
+      if (char === "\\") escaped = true;
+      else if (char === quote) quote = undefined;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") quote = char;
+    else if (char === "{") delta++;
+    else if (char === "}") delta--;
+  }
+  return delta;
 }

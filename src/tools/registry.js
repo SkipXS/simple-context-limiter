@@ -14,11 +14,11 @@ export const tools = {
     {
       name: "run",
       description:
-        "Run a shell command and return only stdout. Large output is automatically truncated to head+tail (default 60 lines). Use this instead of bash when you don't need every line of output.",
+        "Run a local shell command and return stdout only. Stderr is omitted on success; use logs for stderr, exit diagnostics, or error blocks. Large stdout is bounded/truncated.",
       inputSchema: {
         type: "object",
         properties: {
-          command: { type: "string", description: "Shell command to execute" },
+          command: { type: "string", description: "Local shell command to execute. Successful results return stdout only; stderr is counted in metadata, not included." },
           maxLines: {
             type: "integer",
             minimum: 10,
@@ -44,11 +44,11 @@ export const tools = {
     {
       name: "logs",
       description:
-        "Run a shell command and extract relevant log/error blocks instead of returning plain head+tail output. Non-zero exits return normal tool results with exit metadata.",
+        "Run a local shell command and extract stderr/error/warning blocks from combined output. Use for test/build diagnostics; non-zero exits return normal tool results with exit metadata.",
       inputSchema: {
         type: "object",
         properties: {
-          command: { type: "string", description: "Shell command to execute" },
+          command: { type: "string", description: "Local shell command to execute. Combined stdout/stderr is scanned for error/log blocks." },
           maxBlocks: {
             type: "integer",
             minimum: 1,
@@ -86,7 +86,7 @@ export const tools = {
     {
       name: "read",
       description:
-        "Read one or more local UTF-8 text files and return bounded previews. Use path for one file or paths for up to 20 files.",
+        "Read one or more local UTF-8 text files and return bounded previews. Provide path or paths; use path when requesting fromLine/toLine ranges.",
       inputSchema: {
         type: "object",
         properties: {
@@ -151,12 +151,12 @@ export const tools = {
     {
       name: "search",
       description:
-        "Search local files with bounded text or optional ast-grep structural search results.",
+        "Search local files with bounded output. engine=text treats pattern as a regex; engine=ast treats pattern as an ast-grep structural pattern.",
       inputSchema: {
         type: "object",
         properties: {
           engine: { type: "string", enum: ["text", "ast"], description: "Search engine. Default: text. Use ast for ast-grep structural patterns." },
-          pattern: { type: "string", description: "Regex pattern to search for" },
+          pattern: { type: "string", description: "Search pattern: regex for engine=text, ast-grep structural pattern for engine=ast." },
           path: { type: "string", description: "File or directory to search. Default: ." },
           include: { type: "string", description: "File glob to include, for example *.js or *.{ts,tsx}" },
           language: { type: "string", description: "ast-grep language, for example javascript, typescript, kotlin, rust. Optional for engine=ast when it can be inferred from path or include." },
@@ -205,11 +205,11 @@ export const tools = {
     {
       name: "fetch",
       description:
-        "Fetch a URL and return its content as plain text (HTML is stripped to readable text). Large output is automatically truncated to head+tail. Results are cached for 1 hour; use force=true to bypass.",
+        "Fetch an HTTP(S) URL reachable from this machine, including localhost/private networks, and return readable text. Non-HTTP is blocked by default; output is bounded and cached.",
       inputSchema: {
         type: "object",
         properties: {
-          url: { type: "string", description: "URL to fetch" },
+          url: { type: "string", description: "HTTP(S) URL to fetch by default. Localhost/private addresses are reachable if this machine can access them." },
           force: { type: "boolean", description: "Skip cache. Default: false." },
           maxLines: {
             type: "integer",
@@ -230,12 +230,12 @@ export const tools = {
     {
       name: "diff",
       description:
-        "Show compact git diffs, changed-file status, or commit history. Use this instead of raw git diff/status/log when reviewing a repo.",
+        "Show compact git diffs, tracked changed-file status, or commit history. Status/diff excludes untracked files unless they are staged.",
       inputSchema: {
         type: "object",
         properties: {
           path: { type: "string", description: "Optional file or directory pathspec to diff or filter history. Blank values are treated as omitted." },
-          mode: { type: "string", enum: ["diff", "status", "history"], description: "Return diff hunks, changed-file status, or commit history. Default: diff." },
+          mode: { type: "string", enum: ["diff", "status", "history"], description: "Return diff hunks, changed-file status, or commit history. Default: diff. Status excludes untracked files unless staged." },
           staged: { type: "boolean", description: "Show staged changes with git diff --cached. Default: false." },
           stat: { type: "boolean", description: "Include git diff --stat before hunks. Default: true." },
           maxFiles: {

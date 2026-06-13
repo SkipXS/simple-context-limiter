@@ -52,6 +52,27 @@ export function responseMeta(meta) {
   };
 }
 
+export function truncationDiagnostic(reason, retryHint) {
+  const diagnostic = { reason };
+  if (retryHint) diagnostic.retryHint = retryHint;
+  return diagnostic;
+}
+
+export function truncationMeta(truncated, reason, retryHint) {
+  return truncated ? { truncation: truncationDiagnostic(reason, retryHint) } : {};
+}
+
+export function formatTruncationReason(formatted, maxLines, maxBytes) {
+  if (!formatted?.truncated) return undefined;
+  if (formatted.totalLines > maxLines) return "format_lines";
+  if (formatted.totalBytes > maxBytes) return "format_bytes";
+  return "format_limit";
+}
+
+export function omitUndefined(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
+}
+
 export function withResponseMeta(meta) {
   const compact = {};
   for (const [key, value] of Object.entries(meta)) {

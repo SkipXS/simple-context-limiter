@@ -5,10 +5,11 @@ import { MAX_BYTES, MAX_LINES, MAX_READ_BYTES, RG_NAME } from "../constants.js";
 import { formatOutput } from "../output.js";
 import { commandError, runProcessLines } from "../process.js";
 import { recordStats } from "../stats.js";
-import { invalidParams, relativePath, savingsForText, savingsMeta, validateInteger, withResponseMeta } from "./shared.js";
+import { formatTruncationReason, invalidParams, relativePath, savingsForText, savingsMeta, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 const MATCH_SEPARATOR = "\x1f";
 const CONTEXT_SEPARATOR = "\x1e";
+const searchTruncationHint = "Increase maxMatches/maxLines/maxBytes or narrow path/include.";
 const AST_LANGUAGE_BY_EXTENSION = new Map([
   [".c", "c"],
   [".cc", "cpp"],
@@ -223,6 +224,7 @@ export async function searchTool(args) {
     : originalText || "(no matches)";
   const formatted = formatOutput(text, lineLimit, byteLimit);
   const searchSavings = matchLimited ? savingsForText(originalText, formatted.text) : savingsMeta(formatted);
+  const truncated = matchLimited || formatted.truncated;
   const meta = withResponseMeta({
     rgPath: rg,
     totalMatches: matchLimited ? undefined : matches.length,
@@ -232,7 +234,8 @@ export async function searchTool(args) {
     totalLines: formatted.totalLines,
     totalBytes: searchSavings.totalBytes ?? formatted.totalBytes,
     ...searchSavings,
-    truncated: matchLimited || formatted.truncated,
+    truncated,
+    ...truncationMeta(truncated, searchTruncationReason({ matchLimited, result, formatted, maxLines: lineLimit, maxBytes: byteLimit }), searchTruncationHint),
     empty: !matchLimited && matches.length === 0,
     emptyReason: !matchLimited && matches.length === 0 ? "no_matches" : undefined,
     durationMs: result.durationMs,
@@ -247,6 +250,13 @@ export async function searchTool(args) {
 
 function truncatedMatchesLine(shownMatches) {
   return `[truncated after ${shownMatches} shown matches; more matches exist]`;
+}
+
+function searchTruncationReason({ matchLimited, result, formatted, maxLines, maxBytes }) {
+  if (result?.outputTooLarge) return "result_limit";
+  if (matchLimited) return "match_limit";
+  if (result?.truncated) return "result_limit";
+  return formatTruncationReason(formatted, maxLines, maxBytes) ?? "format_limit";
 }
 
 function normalizeAstLanguage(language, searchPath, include) {
@@ -309,6 +319,7 @@ async function astSearchTool(pattern, searchPath, include, language, contextLine
     ? formatAstMatches(shown, matchLimited)
     : "(no matches)";
   const formatted = formatOutput(text, maxLines, maxBytes);
+  const truncated = matchLimited || formatted.truncated;
   const meta = withResponseMeta({
     engine: "ast",
     astGrepPath: sg,
@@ -321,7 +332,8 @@ async function astSearchTool(pattern, searchPath, include, language, contextLine
     totalLines: formatted.totalLines,
     totalBytes: formatted.totalBytes,
     ...savingsMeta(formatted),
-    truncated: matchLimited || formatted.truncated,
+    truncated,
+    ...truncationMeta(truncated, searchTruncationReason({ matchLimited, result, formatted, maxLines, maxBytes }), searchTruncationHint),
     empty: shown.length === 0,
     emptyReason: shown.length === 0 ? "no_matches" : undefined,
     durationMs: Date.now() - started,
@@ -411,6 +423,7 @@ async function searchWithContext(rg, pattern, searchPath, include, contextLines,
   const limited = limitRgContext(result.lines, maxMatches, contextLines);
   const text = limited.text || "(no matches)";
   const formatted = formatOutput(text, maxLines, maxBytes);
+  const truncated = limited.matchLimited || result.truncated || result.outputTooLarge || formatted.truncated;
   const meta = withResponseMeta({
     rgPath: rg,
     contextLines,
@@ -422,7 +435,8 @@ async function searchWithContext(rg, pattern, searchPath, include, contextLines,
     totalLines: formatted.totalLines,
     totalBytes: formatted.totalBytes,
     ...savingsMeta(formatted),
-    truncated: limited.matchLimited || result.truncated || result.outputTooLarge || formatted.truncated,
+    truncated,
+    ...truncationMeta(truncated, searchTruncationReason({ matchLimited: limited.matchLimited, result, formatted, maxLines, maxBytes }), searchTruncationHint),
     empty: !limited.matchLimited && limited.shownMatches === 0,
     emptyReason: !limited.matchLimited && limited.shownMatches === 0 ? "no_matches" : undefined,
     durationMs: Date.now() - started,

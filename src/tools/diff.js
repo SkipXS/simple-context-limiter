@@ -2,7 +2,7 @@ import { MAX_BYTES, MAX_LINES } from "../constants.js";
 import { formatOutput } from "../output.js";
 import { commandError, runProcess } from "../process.js";
 import { recordStats } from "../stats.js";
-import { invalidParams, omission, relativePath, savingsForText, validateInteger, withResponseMeta } from "./shared.js";
+import { formatTruncationReason, invalidParams, omission, relativePath, savingsForText, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 export async function diffTool(args) {
   const {
@@ -53,11 +53,13 @@ export async function diffTool(args) {
   const previewText = composeDiffText(statText, limitedDiff.text);
   const formatted = formatOutput(previewText, lineLimit, byteLimit);
   const diffSavings = savingsForText(originalText, formatted.text);
+  const truncated = limitedDiff.filesLimited || limitedDiff.hunksLimited || formatted.truncated;
   const meta = withResponseMeta({
     totalLines: originalText.split("\n").length,
     totalBytes: diffSavings.totalBytes,
     ...diffSavings,
-    truncated: limitedDiff.filesLimited || limitedDiff.hunksLimited || formatted.truncated,
+    truncated,
+    ...truncationMeta(truncated, diffTruncationReason(limitedDiff, formatted, lineLimit, byteLimit), diffTruncationHint(limitedDiff, formatted, lineLimit, byteLimit)),
     mode,
     path: normalizedDiffPath,
     relativePath: normalizedDiffPath === undefined ? undefined : relativePath(normalizedDiffPath),
@@ -106,6 +108,7 @@ async function historyTool(diffPath, maxCommits, maxLines, maxBytes) {
     totalBytes: historySavings.totalBytes,
     ...historySavings,
     truncated: formatted.truncated,
+    ...truncationMeta(formatted.truncated, formatTruncationReason(formatted, maxLines, maxBytes), "Increase maxLines/maxBytes."),
     empty: raw === "",
     emptyReason: raw === "" ? "no_commit_history" : undefined,
     durationMs: Date.now() - started,
@@ -142,6 +145,7 @@ async function statusTool(diffPath, staged, maxLines, maxBytes) {
     savedPercent: formatted.savedPercent,
     estimatedTokensSaved: formatted.estimatedTokensSaved,
     truncated: formatted.truncated,
+    ...truncationMeta(formatted.truncated, formatTruncationReason(formatted, maxLines, maxBytes), "Increase maxLines/maxBytes."),
     empty: lines.length === 0,
     emptyReason: lines.length === 0 ? "no_changed_files" : undefined,
     durationMs: Date.now() - started,
@@ -193,6 +197,19 @@ function countDiffHunks(diffText) {
 
 function countHistoryCommits(historyText) {
   return historyText ? historyText.split("\n").filter((line) => line.startsWith("commit ")).length : 0;
+}
+
+function diffTruncationReason(limitedDiff, formatted, maxLines, maxBytes) {
+  if (limitedDiff.filesLimited) return "max_files";
+  if (limitedDiff.hunksLimited) return "max_hunks";
+  return formatTruncationReason(formatted, maxLines, maxBytes);
+}
+
+function diffTruncationHint(limitedDiff, formatted, maxLines, maxBytes) {
+  if (limitedDiff.filesLimited) return "Increase maxFiles or pass a narrower path.";
+  if (limitedDiff.hunksLimited) return "Increase maxHunks or pass a narrower path.";
+  if (formatted.truncated) return "Increase maxLines/maxBytes.";
+  return undefined;
 }
 
 function limitDiff(diffText, maxFiles, maxHunks) {

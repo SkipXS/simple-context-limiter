@@ -4,7 +4,7 @@ import { StringDecoder } from "node:string_decoder";
 import { MAX_BYTES, MAX_LINES, MAX_READ_BYTES, READ_RANGE_TIMEOUT_MS } from "../constants.js";
 import { decodeUtf8, formatOutput } from "../output.js";
 import { recordStats } from "../stats.js";
-import { invalidParams, omission, relativePath, validateInteger, withResponseMeta } from "./shared.js";
+import { formatTruncationReason, invalidParams, omission, omitUndefined, relativePath, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 const READ_MANY_CONCURRENCY = 4;
 
@@ -97,6 +97,7 @@ export async function readManyTool(args, toolName = "read") {
   const formatted = formatOutput(combined, totalLineLimit, totalLimit);
   const totalBytes = results.reduce((sum, result) => sum + result._meta.response.totalBytes, 0);
   const contextSavings = savingsForReturnedBytes(totalBytes, formatted.returnedBytes);
+  const truncated = formatted.truncated || results.some((result) => result._meta.truncated);
   const meta = withResponseMeta({
     filesRequested: paths.length,
     filesRead: results.length,
@@ -104,24 +105,9 @@ export async function readManyTool(args, toolName = "read") {
     totalLines: formatted.totalLines,
     totalBytes,
     ...contextSavings,
-    truncated: formatted.truncated || results.some((result) => result._meta.truncated),
-    files: results.map((result) => ({
-      path: result._meta.path,
-      relativePath: result._meta.relativePath,
-      sizeBytes: result._meta.sizeBytes,
-      response: result._meta.response,
-      truncated: result._meta.truncated,
-      fileReadLimited: result._meta.fileReadLimited,
-      fromLine: result._meta.fromLine,
-      toLine: result._meta.toLine,
-      returnedLines: result._meta.returnedLines,
-      scannedLines: result._meta.scannedLines,
-      scannedBytes: result._meta.scannedBytes,
-      scanLimited: result._meta.scanLimited,
-      rangeLimited: result._meta.rangeLimited,
-      scanTimedOut: result._meta.scanTimedOut,
-      lineNumbers: result._meta.lineNumbers,
-    })),
+    truncated,
+    ...truncationMeta(truncated, readManyTruncationReason(formatted, totalLineLimit, totalLimit, results), "Increase maxTotalLines/maxTotalBytes or per-file limits."),
+    files: results.map(readManyFileMeta),
   });
   await recordStats(toolName, meta);
 
@@ -173,6 +159,7 @@ async function readFilePreview(args, toolName) {
   const displayText = lineNumbers ? addLineNumbers(text, range?.fromLine ?? 1) : text;
   const formatted = formatOutput(displayText, lineLimit, byteLimit);
   const contextSavings = savingsForReturnedBytes(stat.size, formatted.returnedBytes);
+  const truncated = formatted.truncated || rangeLimited || limited || scanLimited || scanTimedOut;
   const meta = withResponseMeta({
     path: resolved,
     relativePath: relativePath(resolved),
@@ -180,7 +167,8 @@ async function readFilePreview(args, toolName) {
     totalLines: formatted.totalLines,
     totalBytes: stat.size,
     ...contextSavings,
-    truncated: formatted.truncated || rangeLimited || limited || scanLimited || scanTimedOut,
+    truncated,
+    ...truncationMeta(truncated, readTruncationReason({ formatted, lineLimit, byteLimit, limited, rangeLimited, scanLimited, scanTimedOut }), readTruncationHint({ rangeMode, lineNumbers })),
     empty: text === "",
     emptyReason: text === "" ? "empty_file" : undefined,
     fileReadLimited: limited,
@@ -209,6 +197,44 @@ function savingsForReturnedBytes(totalBytes, returnedBytes) {
     savedPercent: totalBytes > 0 ? Math.round((savedBytes / totalBytes) * 100) : 0,
     estimatedTokensSaved: Math.ceil(savedBytes / 4),
   };
+}
+
+function readTruncationReason({ formatted, lineLimit, byteLimit, limited, rangeLimited, scanLimited, scanTimedOut }) {
+  if (scanLimited || scanTimedOut) return "scan_limit";
+  if (rangeLimited) return "range_limit";
+  if (limited) return "file_limit";
+  return formatTruncationReason(formatted, lineLimit, byteLimit) ?? "format_limit";
+}
+
+function readTruncationHint({ rangeMode }) {
+  return rangeMode ? "Narrow fromLine/toLine or increase maxLines/maxBytes." : "Increase maxLines/maxBytes or read a smaller file.";
+}
+
+function readManyTruncationReason(formatted, maxLines, maxBytes, results) {
+  return formatTruncationReason(formatted, maxLines, maxBytes)
+    ?? results.find((result) => result._meta.truncated)?._meta.truncation?.reason
+    ?? "file_limit";
+}
+
+function readManyFileMeta(result) {
+  return omitUndefined({
+    path: result._meta.path,
+    relativePath: result._meta.relativePath,
+    sizeBytes: result._meta.sizeBytes,
+    truncated: result._meta.truncated,
+    truncation: result._meta.truncation,
+    fileReadLimited: result._meta.fileReadLimited,
+    fromLine: result._meta.fromLine,
+    toLine: result._meta.toLine,
+    returnedLines: result._meta.returnedLines,
+    scannedLines: result._meta.scannedLines,
+    scannedBytes: result._meta.scannedBytes,
+    scanLimited: result._meta.scanLimited,
+    rangeLimited: result._meta.rangeLimited,
+    scanTimedOut: result._meta.scanTimedOut,
+    lineNumbers: result._meta.lineNumbers,
+    response: result._meta.truncated ? result._meta.response : undefined,
+  });
 }
 
 function addLineNumbers(text, firstLine) {

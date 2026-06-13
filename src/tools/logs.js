@@ -2,7 +2,7 @@ import { COMMAND_SHELL_NAME, DEFAULT_COMMAND_TIMEOUT_MS, MAX_BYTES, MAX_COMMAND_
 import { formatOutput } from "../output.js";
 import { runCommandResult } from "../process.js";
 import { recordStats } from "../stats.js";
-import { invalidParams, omission, savingsForText, validateInteger, withResponseMeta } from "./shared.js";
+import { formatTruncationReason, invalidParams, omission, savingsForText, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 export async function logsTool(args) {
   return await logsResult(args, "logs");
@@ -36,11 +36,13 @@ export async function logsResult(args, toolName) {
   const previewText = [statusLine, extraction.text].join("\n");
   const formatted = formatOutput(previewText, lineLimit, byteLimit);
   const logSavings = savingsForText(originalText, formatted.text);
+  const truncated = extraction.truncated || formatted.truncated || result.outputTooLarge;
   const meta = withResponseMeta({
     totalLines: originalText.split("\n").length,
     totalBytes: logSavings.totalBytes,
     ...logSavings,
-    truncated: extraction.truncated || formatted.truncated || result.outputTooLarge,
+    truncated,
+    ...truncationMeta(truncated, logsTruncationReason(extraction, formatted, result, lineLimit, byteLimit), "Increase maxBlocks/contextLines/maxLines/maxBytes or rerun command directly."),
     empty: outputText === "",
     emptyReason: outputText === "" ? "no_output" : undefined,
     exitCode: result.code,
@@ -103,6 +105,7 @@ function extractLogBlocks(text, maxBlocks, contextLines, maxLines) {
       blocksFound: 0,
       blocksShown: 0,
       truncated: lines.length > tail.length,
+      truncationReason: lines.length > tail.length ? "tail_limit" : undefined,
       fallback: true,
     };
   }
@@ -110,8 +113,10 @@ function extractLogBlocks(text, maxBlocks, contextLines, maxLines) {
   const ranges = mergeLogRanges(matches.map((index) => ({
     start: Math.max(0, index - contextLines),
     end: Math.min(lines.length - 1, index + contextLines),
+    severity: logLineSeverity(lines[index]),
   })));
-  const shownRanges = ranges.slice(0, maxBlocks);
+  const prioritizedRanges = prioritizeLogRanges(ranges);
+  const shownRanges = prioritizedRanges.slice(0, maxBlocks);
   const output = [];
 
   for (const [rangeIndex, range] of shownRanges.entries()) {
@@ -128,29 +133,70 @@ function extractLogBlocks(text, maxBlocks, contextLines, maxLines) {
     blocksFound: ranges.length,
     blocksShown: shownRanges.length,
     truncated: limitedByBlocks,
+    truncationReason: limitedByBlocks ? "block_limit" : undefined,
     fallback: false,
   };
 }
 
+function logsTruncationReason(extraction, formatted, result, maxLines, maxBytes) {
+  const reasons = [];
+  if (result.outputTooLarge) reasons.push("command_output_cap");
+  if (extraction.truncationReason) reasons.push(extraction.truncationReason);
+  if (formatted.truncated) reasons.push(formatTruncationReason(formatted, maxLines, maxBytes));
+  return reasons.filter(Boolean).join("+") || "format_limit";
+}
+
 function isInterestingLogLine(line) {
-  return /\b(error|failed|failure|exception|assertion|fatal|panic|traceback|warning|warn)\b/i.test(line)
-    || /(?:\bERR!|\b(?:ERROR|FAIL|FAILED|FATAL|WARN)\b)/.test(line)
+  return logLineSeverity(line) > 0;
+}
+
+function logLineSeverity(line) {
+  if (isFailureLogLine(line)) return 4;
+  if (isSupportLogLine(line)) return 3;
+  if (isWarningLogLine(line)) return 2;
+  return 0;
+}
+
+function isFailureLogLine(line) {
+  return /\b(error|failed|failure|exception|assertion|fatal|panic|traceback)\b/i.test(line)
+    || /(?:\bERR!|\b(?:ERROR|FAIL|FAILED|FATAL)\b)/.test(line)
     || /\b[A-Z][A-Za-z0-9_]*(?:Error|Exception):/.test(line)
-    || /\bTS\d{4}:/.test(line)
-    || /^\s*at\s+.+:\d+:\d+\)?$/.test(line)
+    || /\bTS\d{4}:/.test(line);
+}
+
+function isWarningLogLine(line) {
+  return /\b(warning|warn)\b/i.test(line)
+    || /\bWARN\b/.test(line);
+}
+
+function isSupportLogLine(line) {
+  return /^\s*at\s+.+:\d+:\d+\)?$/.test(line)
     || /^\s*\^+$/.test(line);
+}
+
+function prioritizeLogRanges(ranges) {
+  return [...ranges].sort((left, right) => {
+    if (right.severity !== left.severity) return right.severity - left.severity;
+    return left.start - right.start;
+  });
 }
 
 function mergeLogRanges(ranges) {
   const merged = [];
   for (const range of ranges) {
     const previous = merged.at(-1);
-    if (previous && range.start <= previous.end + 1) {
+    if (previous && range.start <= previous.end + 1 && shouldMergeLogRanges(previous, range)) {
       previous.end = Math.max(previous.end, range.end);
+      previous.severity = Math.max(previous.severity ?? 0, range.severity ?? 0);
     } else {
       merged.push({ ...range });
     }
   }
 
   return merged;
+}
+
+function shouldMergeLogRanges(previous, range) {
+  if (previous.severity === range.severity) return true;
+  return previous.severity >= 3 && range.severity >= 3;
 }

@@ -3,7 +3,7 @@ import { ALLOW_NON_HTTP_FETCH, CACHE_TTL_MS, MAX_BYTES, MAX_FETCH_BYTES, MAX_LIN
 import { getCache, updateCache } from "../cache.js";
 import { decodeUtf8, formatOutput } from "../output.js";
 import { recordStats } from "../stats.js";
-import { invalidParams, savingsMeta, validateInteger, withResponseMeta } from "./shared.js";
+import { formatTruncationReason, invalidParams, savingsMeta, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 function htmlToText(html) {
   return html
@@ -171,11 +171,13 @@ export async function fetchTool(args) {
 
   const data = await fetchUrl(url, force);
   const formatted = formatOutput(data.content, lineLimit, byteLimit);
+  const truncated = formatted.truncated || data.limited;
   const meta = withResponseMeta({
     totalLines: formatted.totalLines,
     totalBytes: formatted.totalBytes,
     ...savingsMeta(formatted),
-    truncated: formatted.truncated || data.limited,
+    truncated,
+    ...truncationMeta(truncated, data.limited ? "download_limit" : formatTruncationReason(formatted, lineLimit, byteLimit), data.limited ? "Fetch smaller content or raise the fetch byte cap." : "Increase maxLines/maxBytes."),
     empty: data.content === "",
     emptyReason: data.content === "" ? "empty_response" : undefined,
     url: data.url,

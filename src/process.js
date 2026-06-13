@@ -239,14 +239,16 @@ export async function runCommandResult(command, options = {}) {
     });
     child.on("close", (code, signal) => {
       clearTimeout(timer);
-      const stdoutText = Buffer.concat(stdout).toString("utf8");
-      const stderrText = Buffer.concat(stderr).toString("utf8");
+      const stdoutBuffer = Buffer.concat(stdout);
+      const stderrBuffer = Buffer.concat(stderr);
+      const outputBuffer = Buffer.concat(output);
       resolve({
         code,
         signal,
-        stdout: stdoutText,
-        stderr: stderrText,
-        output: Buffer.concat(output).toString("utf8"),
+        stdout: stdoutBuffer.toString("utf8"),
+        stderr: stderrBuffer.toString("utf8"),
+        stderrBytes: stderrBuffer.byteLength,
+        output: outputBuffer.toString("utf8"),
         durationMs: Date.now() - started,
         timeoutMs,
         timedOut,
@@ -261,6 +263,7 @@ export async function runCommand(command, options = {}) {
   if (options.allowOutputTooLarge && result.outputTooLarge && !result.timedOut && result.stdout) {
     return {
       stdout: result.stdout,
+      stderrBytes: result.stderrBytes,
       durationMs: result.durationMs,
       timeoutMs: result.timeoutMs,
       outputTooLarge: result.outputTooLarge,
@@ -269,7 +272,15 @@ export async function runCommand(command, options = {}) {
     };
   }
   if (result.code === 0 && !result.signal && !result.timedOut) {
-    return { stdout: result.stdout, durationMs: result.durationMs, timeoutMs: result.timeoutMs, outputTooLarge: result.outputTooLarge, code: result.code, signal: result.signal };
+    return {
+      stdout: result.stdout,
+      stderrBytes: result.stderrBytes,
+      durationMs: result.durationMs,
+      timeoutMs: result.timeoutMs,
+      outputTooLarge: result.outputTooLarge,
+      code: result.code,
+      signal: result.signal,
+    };
   }
 
   commandError(command, result.code, result.signal, result.stdout, result.stderr, result.timedOut, result.outputTooLarge, result.timeoutMs);

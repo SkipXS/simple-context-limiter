@@ -1,7 +1,7 @@
 {
   "name": "simple-context-limiter",
   "version": "1.0.0",
-  "description": "Minimal MCP server that keeps large command, file, search, and web output out of LLM context",
+  "description": "Minimal MCP server that bounds command/log, file, search, repo discovery, web, git diff, and usage output for LLM context",
   "type": "module",
   "main": "server.js",
   "repository": {

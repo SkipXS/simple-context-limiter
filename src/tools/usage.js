@@ -2,7 +2,7 @@ import { MAX_BYTES, MAX_LINES, projectKey } from "../constants.js";
 import { formatOutput } from "../output.js";
 import { emptyCounter, formatStatsReport, getStats, normalizeCounter, withSavedPercent } from "../stats.js";
 import { usageReport } from "../usage.js";
-import { invalidParams, responseMeta, savingsMeta, validateInteger, withResponseMeta } from "./shared.js";
+import { formatTruncationReason, invalidParams, responseMeta, savingsMeta, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 export async function usageTool(args) {
   const { mode = "stats", maxEvents = 1000, maxLines = MAX_LINES, maxBytes = MAX_BYTES } = args ?? {};
@@ -24,6 +24,7 @@ export async function usageTool(args) {
     totalBytes: formatted.totalBytes,
     ...savingsMeta(formatted),
     truncated: formatted.truncated,
+    ...truncationMeta(formatted.truncated, formatTruncationReason(formatted, lineLimit, byteLimit), "Increase maxLines/maxBytes."),
     durationMs: Date.now() - started,
   });
 
@@ -107,6 +108,7 @@ async function statsResult(maxLines, maxBytes) {
       ...stats,
       response,
       truncated: formatted.truncated,
+      ...truncationMeta(formatted.truncated, formatTruncationReason(formatted, maxLines, maxBytes), "Increase maxLines/maxBytes."),
       durationMs: Date.now() - started,
     },
   };

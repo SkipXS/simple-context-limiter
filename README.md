@@ -22,7 +22,7 @@ simple-context-limiter is intended for trusted local MCP clients. The `run` tool
 ### `run`
 
 Runs a shell command and returns stdout. Output is automatically truncated when it exceeds 60 lines or 32 KB. Override with `maxLines` or `maxBytes` per call.
-Commands that exit successfully but write diagnostics to stderr will not include stderr in `run`; use `logs` when stderr or mixed command output matters.
+Commands that exit successfully but write diagnostics to stderr will not include stderr in `run`; use `logs` when stderr or mixed command output matters. In that case `_meta.stderrOmitted: true` and `_meta.stderrBytes` report that stderr existed without leaking its text.
 
 ```json
 { "command": "find . -name '*.ts'", "maxLines": 100, "maxBytes": 16384, "timeoutMs": 120000 }
@@ -243,15 +243,17 @@ Large output is returned as head + tail with compact ASCII truncation markers:
 ...
 ```
 
-The response always includes `_meta.truncated`. If it is `true`, the LLM can re-run with a higher `maxLines` or `maxBytes`, pre-filter the command, read a narrower `read` line range, or fall back to the native client tool when every line is genuinely needed.
+The response always includes `_meta.truncated`. If it is `true`, `_meta.truncation` gives a compact `{ "reason", "retryHint" }` such as `format_lines`, `download_limit`, `max_files`, or `depth_limit`. The LLM can re-run with a higher `maxLines` or `maxBytes`, pre-filter the command, read a narrower `read` line range, or fall back to the native client tool when every line is genuinely needed.
 
-Each tool response reports compact savings stats in `_meta.response`: `totalBytes`, `returnedBytes`, `savedBytes`, `savedPercent`, `estimatedTokensSaved`, and `truncated`. Those byte counters are no longer duplicated at the top level of `_meta`; top-level fields are reserved for tool-specific facts such as `durationMs`, `emptyReason`, `exitCode`, `shownMatches`, or `filesChanged`. Empty/no-result responses set `_meta.empty: true` plus a compact reason such as `no_matches`, `no_output`, or `no_diff`. Token savings are approximate and use `savedBytes / 4` as a dependency-free estimate. In `usage` `mode: "stats"`, top-level totals describe aggregate usage stats while formatted response savings remain in `_meta.response`.
+Each tool response reports compact savings stats in `_meta.response`: `totalBytes`, `returnedBytes`, `savedBytes`, `savedPercent`, `estimatedTokensSaved`, and `truncated`. Those byte counters are no longer duplicated at the top level of `_meta`; top-level fields are reserved for tool-specific facts such as `durationMs`, `emptyReason`, `exitCode`, `stderrOmitted`, `stderrBytes`, `shownMatches`, or `filesChanged`. Empty/no-result responses set `_meta.empty: true` plus a compact reason such as `no_matches`, `no_output`, or `no_diff`. Token savings are approximate and use `savedBytes / 4` as a dependency-free estimate. In `usage` `mode: "stats"`, top-level totals describe aggregate usage stats while formatted response savings remain in `_meta.response`.
 
 `maxBytes` controls the formatted response preview size and accepts values from 1024 to 32768. It does not raise the separate file-read or download safety caps.
 
 Aggregate stats are stored globally in `~/.simple-context-limiter/stats.json`. They contain only numeric counters grouped by project path and tool name, not commands, file paths, URLs, or content.
 
-The server also injects short MCP startup instructions that tell the LLM to prefer these bounded tools for shell output, logs, file previews, local search, repo discovery, readable web pages, git previews, and usage guidance. Native shell, read, fetch, or diff tools remain appropriate when complete output, exact stderr/exit behavior, interactivity, raw HTML, or unsupported behavior is specifically needed. If `_meta.truncated` or `_meta.response.truncated` is true, retry with a narrower query/range/path or higher `maxLines`/`maxBytes` before falling back to native tools.
+The published `tools/list` schemas preserve strict `additionalProperties: false` validation and describe high-risk semantics: `run`/`logs` execute local shell commands, `search` uses regex patterns for text and ast-grep patterns for AST mode, `fetch` is HTTP(S) by default but can reach localhost/private networks, and `diff` status excludes untracked files unless staged.
+
+The server also injects short MCP startup instructions that tell the LLM to prefer these bounded tools for shell output, logs, file previews, local search, repo discovery, readable web pages, git previews, and usage guidance. Native shell, read, fetch, or diff tools remain appropriate when complete output, exact stderr/exit behavior, interactivity, raw HTML, or unsupported behavior is specifically needed. If `_meta.truncated`, `_meta.truncation`, or `_meta.response.truncated` indicates truncation, retry with a narrower query/range/path or higher `maxLines`/`maxBytes` before falling back to native tools.
 
 ## Errors
 
