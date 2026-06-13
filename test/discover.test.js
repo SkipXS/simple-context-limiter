@@ -9,19 +9,51 @@ const { describe, it } = await import("node:test");
 const { callTool } = await import("../src/tools.js");
 
 await describe("sc-discover", async () => {
-  await it("summarizes package metadata and README context", async () => {
+  await it("summarizes package metadata and README context from the default root", async () => {
     await withTempProject(async (dir) => {
       await seedProject(dir);
 
       const result = await callTool("sc-discover", { mode: "summary", maxLines: 80, maxBytes: 8192 });
       const text = result.content[0].text;
 
-      assert.match(text, /Project:/);
+      assert.match(text, /Project: \./);
       assert.match(text, /Name: demo-project/);
+      assert.doesNotMatch(text, /Name: nested-project/);
       assert.match(text, /Node: >=22/);
       assert.match(text, /README:/);
       assert.equal(result._meta.mode, "summary");
+      assert.equal(result._meta.root, path.resolve(dir));
+      assert.equal(result._meta.relativeRoot, ".");
       assert.equal(result._meta.truncated, false);
+    });
+  });
+
+  await it("summarizes the requested path instead of always using the process cwd", async () => {
+    await withTempProject(async (dir) => {
+      await seedProject(dir);
+
+      const result = await callTool("sc-discover", { mode: "summary", path: "src", maxLines: 80, maxBytes: 8192 });
+      const text = result.content[0].text;
+
+      assert.match(text, /Project: src/);
+      assert.match(text, /Name: nested-project/);
+      assert.doesNotMatch(text, /Name: demo-project/);
+      assert.match(text, /Nested package README/);
+      assert.equal(result._meta.mode, "summary");
+      assert.equal(result._meta.root, path.join(dir, "src"));
+      assert.equal(result._meta.relativeRoot, "src");
+      assert.equal(result._meta.truncated, false);
+    });
+  });
+
+  await it("validates summary path with the same non-empty string contract as other path modes", async () => {
+    await withTempProject(async (dir) => {
+      await seedProject(dir);
+
+      await assert.rejects(
+        () => callTool("sc-discover", { mode: "summary", path: "" }),
+        /discover path must be a non-empty string when provided/,
+      );
     });
   });
 
@@ -82,6 +114,12 @@ async function seedProject(dir) {
     scripts: { test: "node --test" },
   }, null, 2), "utf8");
   await fs.writeFile(path.join(dir, "README.md"), "# Demo Project\n\nA tiny demo for discovery tests.\n", "utf8");
+  await fs.writeFile(path.join(dir, "src", "package.json"), JSON.stringify({
+    name: "nested-project",
+    version: "2.0.0",
+    type: "module",
+  }, null, 2), "utf8");
+  await fs.writeFile(path.join(dir, "src", "README.md"), "# Nested package README\n\nA nested package summary should be distinct.\n", "utf8");
   await fs.writeFile(path.join(dir, "src", "main.js"), `
 export function greet(name) {
   return \`hello \${name}\`;

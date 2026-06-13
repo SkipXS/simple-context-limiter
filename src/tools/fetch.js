@@ -63,7 +63,7 @@ function decodeNumericHtmlEntity(match, value) {
   return String.fromCodePoint(codePoint);
 }
 
-async function fetchUrl(url, { force = false, cache: cacheArg } = {}) {
+async function fetchUrl(url, { force = false, cache: cacheArg, bodyMaxBytes = MAX_FETCH_BYTES } = {}) {
   let parsed;
   try { parsed = new URL(url); } catch {
     invalidParams("fetch requires a valid URL");
@@ -128,7 +128,8 @@ async function fetchUrl(url, { force = false, cache: cacheArg } = {}) {
   }
 
   const htmlStripped = contentInfo.html;
-  const { text: raw, limited } = await readLimitedText(res, MAX_FETCH_BYTES, contentInfo.charset);
+  const effectiveBodyMaxBytes = Math.min(MAX_FETCH_BYTES, Math.max(1, bodyMaxBytes));
+  const { text: raw, limited } = await readLimitedText(res, effectiveBodyMaxBytes, contentInfo.charset);
   const text = htmlStripped ? htmlToText(raw) : raw;
   const finalUrl = res.url || url;
   const finalCachePolicy = await fetchCachePolicy(url, finalUrl, cacheArg);
@@ -434,8 +435,8 @@ export async function fetchTool(args) {
   const lineLimit = validateInteger(maxLines, "fetch maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "fetch maxBytes", 1024, MAX_BYTES);
 
-  const data = await fetchUrl(url, { force, cache });
   const responseByteLimit = Math.min(byteLimit, MAX_FETCH_BYTES);
+  const data = await fetchUrl(url, { force, cache, bodyMaxBytes: fetchBodyByteLimit(byteLimit) });
   const formatted = formatOutput(formatFetchDisplayText(data), lineLimit, responseByteLimit);
   const truncated = formatted.truncated || data.limited;
   const meta = withResponseMeta({
@@ -463,6 +464,11 @@ export async function fetchTool(args) {
   await recordStats("fetch", meta);
 
   return toolTextResult(formatted.text, meta, responseByteLimit);
+}
+
+function fetchBodyByteLimit(byteLimit) {
+  const slackBytes = Math.max(1024, Math.ceil(byteLimit * 0.25));
+  return Math.min(MAX_FETCH_BYTES, byteLimit + slackBytes);
 }
 
 function formatFetchDisplayText(data) {

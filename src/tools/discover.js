@@ -267,12 +267,13 @@ async function hasVisibleTreeChildren(directory) {
 }
 
 async function summaryMode(args) {
-  const { maxLines = MAX_LINES, maxBytes = DEFAULT_BYTES } = args ?? {};
+  const { path: inputPath = ".", maxLines = MAX_LINES, maxBytes = DEFAULT_BYTES } = args ?? {};
+  if (typeof inputPath !== "string" || inputPath.trim() === "") invalidParams("discover path must be a non-empty string when provided");
   const lineLimit = validateInteger(maxLines, "discover maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "discover maxBytes", 1024, MAX_BYTES);
-  await assertPathAllowed(process.cwd(), "discover");
+  await assertPathAllowed(inputPath, "discover");
   const started = Date.now();
-  const root = process.cwd();
+  const root = path.resolve(inputPath);
   const lines = [`Project: ${relativePath(root)}`];
 
   const packageJson = await readJsonIfExists(path.join(root, "package.json"));

@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Documented that public-only fetch checks and private-host cache bypass are best-effort convenience guards, not an SSRF sandbox or substitute for external network isolation.
+- Trimmed published package contents to runtime files and docs, made source-checkout npm validation scripts safe in installed packages, and made pack smoke validation assert the tarball file list plus installed script/bin behavior.
+
 ## 1.1.0 - 2026-06-13
 
 - Hardened `sc-fetch` cache defaults for private/local URLs, added explicit cache controls, rejected binary responses, and documented charset behavior.

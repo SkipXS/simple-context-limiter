@@ -130,7 +130,7 @@ export function commandError(command, code, signal, stdout, stderr, timedOut = f
     : timedOut
       ? `timed out after ${timeoutMs}ms${exitDetailSuffix(code, signal)}`
       : exitDetail(code, signal) || `exited with code ${code}`;
-  const error = new Error(`Command failed: ${command} (${detail})`);
+  const error = new Error(`Command failed: ${compactDiagnosticValue(command)} (${detail})`);
 
   error.status = code;
   error.signal = signal;
@@ -140,6 +140,14 @@ export function commandError(command, code, signal, stdout, stderr, timedOut = f
   error.outputTooLarge = outputTooLarge;
   error.timeoutMs = timeoutMs;
   throw error;
+}
+
+function compactDiagnosticValue(value, maxLength = 320) {
+  const text = String(value ?? "");
+  if (text.length <= maxLength) return text;
+  const tailLength = Math.min(80, Math.floor(maxLength * 0.25));
+  const headLength = maxLength - tailLength - 20;
+  return `${text.slice(0, headLength)}... [${text.length - headLength - tailLength} chars omitted] ...${text.slice(-tailLength)}`;
 }
 
 function exitDetail(code, signal) {
@@ -155,7 +163,7 @@ function exitDetailSuffix(code, signal) {
 
 export function errorData(error) {
   const data = {};
-  for (const key of ["code", "errno", "address", "port", "httpStatus", "httpStatusText", "url"]) {
+  for (const key of ["code", "errno", "address", "port", "httpStatus", "httpStatusText", "url", "finalUrl", "contentType"]) {
     if (typeof error[key] === "string" || typeof error[key] === "number") data[key] = error[key];
   }
   if (error.cause) {

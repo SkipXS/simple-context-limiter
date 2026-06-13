@@ -24,5 +24,7 @@ jobs:
       - run: npm ci
       - run: npm run audit
       - run: npm run check
+      - run: npm run coverage
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node-version == 24 }}
       - run: npm run test:smoke
       - run: npm run release:check

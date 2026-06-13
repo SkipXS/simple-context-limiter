@@ -1,4 +1,4 @@
-import { MAX_BYTES } from "../constants.js";
+import { DEFAULT_BYTES, DEFAULT_COMMAND_TIMEOUT_MS, MAX_BYTES, MAX_COMMAND_TIMEOUT_MS, MAX_LINES, MIN_COMMAND_TIMEOUT_MS } from "../constants.js";
 import { discoverTool } from "./discover.js";
 import { diffTool } from "./diff.js";
 import { fetchTool } from "./fetch.js";
@@ -10,6 +10,34 @@ import { usageTool } from "./usage.js";
 import { recordUsage } from "../usage.js";
 
 const TOOL_PREFIX = "sc-";
+
+export const COMMON_SCHEMA_DEFAULTS = Object.freeze({
+  maxLines: MAX_LINES,
+  maxBytes: DEFAULT_BYTES,
+  timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
+});
+
+function integerProperty({ minimum, maximum, defaultValue, description }) {
+  return {
+    type: "integer",
+    minimum,
+    maximum,
+    default: defaultValue,
+    description: `${description} Default: ${defaultValue}.`,
+  };
+}
+
+function maxLinesProperty(description = "Content line cap.", defaultValue = COMMON_SCHEMA_DEFAULTS.maxLines) {
+  return integerProperty({ minimum: 10, maximum: 500, defaultValue, description });
+}
+
+function maxBytesProperty(description = "Byte cap.") {
+  return integerProperty({ minimum: 1024, maximum: MAX_BYTES, defaultValue: COMMON_SCHEMA_DEFAULTS.maxBytes, description });
+}
+
+function timeoutMsProperty() {
+  return integerProperty({ minimum: MIN_COMMAND_TIMEOUT_MS, maximum: MAX_COMMAND_TIMEOUT_MS, defaultValue: COMMON_SCHEMA_DEFAULTS.timeoutMs, description: "Timeout ms." });
+}
 
 function internalToolName(name) {
   return typeof name === "string" && name.startsWith(TOOL_PREFIX) ? name.slice(TOOL_PREFIX.length) : undefined;
@@ -25,24 +53,9 @@ export const tools = {
         type: "object",
         properties: {
           command: { type: "string", description: "Shell command to execute." },
-          maxLines: {
-            type: "integer",
-            minimum: 10,
-            maximum: 500,
-            description: "Content line cap. Default: 60.",
-          },
-          maxBytes: {
-            type: "integer",
-            minimum: 1024,
-            maximum: MAX_BYTES,
-            description: "Byte cap. Default: 32768.",
-          },
-          timeoutMs: {
-            type: "integer",
-            minimum: 100,
-            maximum: 1800000,
-            description: "Timeout ms. Default: 120000.",
-          },
+          maxLines: maxLinesProperty(),
+          maxBytes: maxBytesProperty(),
+          timeoutMs: timeoutMsProperty(),
         },
         required: ["command"],
       },
@@ -67,24 +80,9 @@ export const tools = {
             maximum: 20,
             description: "Context lines around matches. Default: 5.",
           },
-          maxLines: {
-            type: "integer",
-            minimum: 10,
-            maximum: 500,
-            description: "Content line cap. Default: 120.",
-          },
-          maxBytes: {
-            type: "integer",
-            minimum: 1024,
-            maximum: MAX_BYTES,
-            description: "Byte cap. Default: 32768.",
-          },
-          timeoutMs: {
-            type: "integer",
-            minimum: 100,
-            maximum: 1800000,
-            description: "Timeout ms. Default: 120000.",
-          },
+          maxLines: maxLinesProperty("Content line cap.", 120),
+          maxBytes: maxBytesProperty(),
+          timeoutMs: timeoutMsProperty(),
         },
         required: ["command"],
       },
@@ -104,19 +102,9 @@ export const tools = {
             items: { type: "string" },
             description: "Standalone list or extra files, max 20. Ranges apply only to path/one file.",
           },
-          maxLines: {
-            type: "integer",
-            minimum: 10,
-            maximum: 500,
-            description: "Content line cap. Default: 60; per-file in paths mode.",
-          },
+          maxLines: maxLinesProperty("Content line cap; per-file in paths mode."),
           lineNumbers: { type: "boolean", description: "Number ranged lines. Default: false." },
-          maxBytes: {
-            type: "integer",
-            minimum: 1024,
-            maximum: MAX_BYTES,
-            description: "Byte cap. Default: 32768; per-file in paths mode.",
-          },
+          maxBytes: maxBytesProperty("Byte cap; per-file in paths mode."),
           fromLine: {
             type: "integer",
             minimum: 1,
@@ -127,24 +115,9 @@ export const tools = {
             minimum: 1,
             description: "Last 1-based line for ranged read.",
           },
-          maxLinesPerFile: {
-            type: "integer",
-            minimum: 10,
-            maximum: 500,
-            description: "paths mode: lines per file. Default: 60.",
-          },
-          maxBytesPerFile: {
-            type: "integer",
-            minimum: 1024,
-            maximum: MAX_BYTES,
-            description: "paths mode: bytes per file. Default: 32768.",
-          },
-          maxTotalBytes: {
-            type: "integer",
-            minimum: 1024,
-            maximum: MAX_BYTES,
-            description: "paths mode: total byte cap. Default: 32768.",
-          },
+          maxLinesPerFile: maxLinesProperty("paths mode: lines per file."),
+          maxBytesPerFile: maxBytesProperty("paths mode: bytes per file."),
+          maxTotalBytes: maxBytesProperty("paths mode: total byte cap."),
           maxTotalLines: {
             type: "integer",
             minimum: 10,
@@ -166,25 +139,16 @@ export const tools = {
           path: { type: "string", description: "Search path. Default: ." },
           include: { type: "string", description: "Include glob, not regex, e.g. *.js." },
           language: { type: "string", description: "ast-grep language when not inferred." },
-          contextLines: { type: "integer", minimum: 0, maximum: 10, description: "Context lines. Default: 0." },
+          contextLines: { type: "integer", minimum: 0, maximum: 10, default: 0, description: "Context lines. Default: 0." },
           maxMatches: {
             type: "integer",
             minimum: 1,
             maximum: 1000,
+            default: 100,
             description: "Match cap. Default: 100.",
           },
-          maxLines: {
-            type: "integer",
-            minimum: 10,
-            maximum: 500,
-            description: "Content line cap. Default: 60.",
-          },
-          maxBytes: {
-            type: "integer",
-            minimum: 1024,
-            maximum: MAX_BYTES,
-            description: "Byte cap. Default: 32768.",
-          },
+          maxLines: maxLinesProperty(),
+          maxBytes: maxBytesProperty(),
         },
         required: ["pattern"],
       },
@@ -202,9 +166,9 @@ export const tools = {
           maxFiles: { type: "integer", minimum: 1, maximum: 5000, description: "files: file cap. Default: 500." },
           maxDepth: { type: "integer", minimum: 1, maximum: 10, description: "tree: depth cap. Default: 3." },
           maxEntries: { type: "integer", minimum: 1, maximum: 2000, description: "tree: entry cap. Default: 200." },
-          maxSymbols: { type: "integer", minimum: 1, maximum: 1000, description: "outline: symbol cap. Default: 200." },
-          maxLines: { type: "integer", minimum: 10, maximum: 500, description: "Content line cap. Default: 60." },
-          maxBytes: { type: "integer", minimum: 1024, maximum: MAX_BYTES, description: "Byte cap. Default: 32768." },
+          maxSymbols: { type: "integer", minimum: 1, maximum: 1000, default: 200, description: "outline: symbol cap. Default: 200." },
+          maxLines: maxLinesProperty(),
+          maxBytes: maxBytesProperty(),
         },
       },
     },
@@ -218,18 +182,8 @@ export const tools = {
           url: { type: "string", description: "HTTP(S) URL; localhost/private reachable." },
           force: { type: "boolean", description: "Skip cache read and refresh. Default: false." },
           cache: { type: "boolean", description: "Override fetch cache use. Default: public text only; private literal hosts bypass unless opted in." },
-          maxLines: {
-            type: "integer",
-            minimum: 10,
-            maximum: 500,
-            description: "Content line cap. Default: 60.",
-          },
-          maxBytes: {
-            type: "integer",
-            minimum: 1024,
-            maximum: MAX_BYTES,
-            description: "Byte cap. Default: 32768.",
-          },
+          maxLines: maxLinesProperty(),
+          maxBytes: maxBytesProperty(),
         },
         required: ["url"],
       },
@@ -261,20 +215,11 @@ export const tools = {
             type: "integer",
             minimum: 1,
             maximum: 200,
+            default: 20,
             description: "diff: hunk cap. Default: 20.",
           },
-          maxLines: {
-            type: "integer",
-            minimum: 10,
-            maximum: 500,
-            description: "Content line cap. Default: 60.",
-          },
-          maxBytes: {
-            type: "integer",
-            minimum: 1024,
-            maximum: MAX_BYTES,
-            description: "Byte cap. Default: 32768.",
-          },
+          maxLines: maxLinesProperty(),
+          maxBytes: maxBytesProperty(),
         },
       },
     },
@@ -286,9 +231,9 @@ export const tools = {
         type: "object",
         properties: {
           mode: { type: "string", enum: ["stats", "report", "guidance"], description: "Mode. Default: stats." },
-          maxEvents: { type: "integer", minimum: 1, maximum: 10000, description: "Event cap. Default: 1000." },
-          maxLines: { type: "integer", minimum: 10, maximum: 500, description: "Content line cap. Default: 60." },
-          maxBytes: { type: "integer", minimum: 1024, maximum: MAX_BYTES, description: "Byte cap. Default: 32768." },
+          maxEvents: { type: "integer", minimum: 1, maximum: 10000, default: 1000, description: "Event cap. Default: 1000." },
+          maxLines: maxLinesProperty(),
+          maxBytes: maxBytesProperty(),
         },
       },
     },
@@ -305,6 +250,10 @@ const handlers = {
   diff: diffTool,
   usage: usageTool,
 };
+
+export function registeredToolNamesForTest() {
+  return Object.keys(handlers).map((name) => `${TOOL_PREFIX}${name}`);
+}
 
 for (const tool of tools.tools) {
   tool.name = `${TOOL_PREFIX}${tool.name}`;

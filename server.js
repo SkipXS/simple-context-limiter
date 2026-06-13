@@ -3,6 +3,7 @@
 import { MAX_RPC_BATCH_CONCURRENCY, MAX_RPC_BATCH_SIZE, MAX_RPC_LINE_BYTES, MAX_RPC_PENDING_REQUESTS, MAX_RPC_TOOL_CONCURRENCY, MAX_RPC_TOOL_QUEUE, SERVER_NAME, SERVER_VERSION } from "./src/constants.js";
 import { tools, callTool } from "./src/tools.js";
 import { commandErrorData, errorData, terminateActiveChildren } from "./src/process.js";
+import { formatOutput } from "./src/output.js";
 
 const PROTOCOL_VERSION = "2024-11-05";
 const OVERLOAD_ERROR_CODE = -32003;
@@ -59,35 +60,45 @@ function isProtocolToolError(error) {
   return error?.code === -32601 || error?.code === -32602 || error?.code === -32002 || error?.code === OVERLOAD_ERROR_CODE;
 }
 
-function toolErrorResult(error) {
-  const diagnosticMeta = commandErrorData(error) ?? errorData(error) ?? {};
-  const text = formatToolErrorText(error, Object.keys(diagnosticMeta).length > 0 ? diagnosticMeta : undefined);
+function toolErrorResult(error, params) {
+  const requestedMaxBytes = toolCallMaxBytes(params);
+  const maxBytes = Number.isInteger(requestedMaxBytes) ? Math.min(requestedMaxBytes, TOOL_ERROR_TEXT_BYTES) : TOOL_ERROR_TEXT_BYTES;
+  const diagnosticMeta = sanitizeErrorMeta(commandErrorData(error) ?? errorData(error)) ?? {};
+  const rawText = formatToolErrorText(error, Object.keys(diagnosticMeta).length > 0 ? diagnosticMeta : undefined);
+  const formatted = formatOutput(rawText, TOOL_ERROR_TEXT_LINES, maxBytes);
+  const text = formatted.text;
   const returnedBytes = Buffer.byteLength(text, "utf8");
+  const truncated = formatted.truncated;
   return {
     content: [{ type: "text", text }],
     isError: true,
     _meta: {
       ...diagnosticMeta,
-      truncated: false,
+      truncated,
       response: {
-        totalLines: text.split("\n").length,
-        totalBytes: returnedBytes,
+        totalLines: formatted.totalLines,
+        totalBytes: formatted.totalBytes,
         returnedBytes,
-        savedBytes: 0,
-        savedPercent: 0,
-        estimatedTokensSaved: 0,
-        truncated: false,
+        savedBytes: Math.max(0, formatted.totalBytes - returnedBytes),
+        savedPercent: formatted.totalBytes > 0 ? Math.round((Math.max(0, formatted.totalBytes - returnedBytes) / formatted.totalBytes) * 100) : 0,
+        estimatedTokensSaved: Math.ceil(Math.max(0, formatted.totalBytes - returnedBytes) / 4),
+        truncated,
       },
     },
   };
 }
 
-function formatToolErrorText(error, meta) {
-  if (!meta || typeof meta !== "object") return error.message;
+const TOOL_ERROR_TEXT_LINES = 80;
+const TOOL_ERROR_TEXT_BYTES = 4096;
+const DIAGNOSTIC_VALUE_LENGTH = 512;
 
-  const lines = [error.message];
+function formatToolErrorText(error, meta) {
+  const message = compactDiagnosticValue(error.message, DIAGNOSTIC_VALUE_LENGTH);
+  if (!meta || typeof meta !== "object") return message;
+
+  const lines = [message];
   const details = [];
-  for (const key of ["exitCode", "signal", "timedOut", "outputTooLarge", "timeoutMs", "httpStatus", "httpStatusText", "code", "errno", "address", "port", "url"]) {
+  for (const key of ["exitCode", "signal", "timedOut", "outputTooLarge", "timeoutMs", "httpStatus", "httpStatusText", "code", "errno", "address", "port", "url", "finalUrl", "contentType"]) {
     if (meta[key] !== undefined) details.push(`${key}: ${meta[key]}`);
   }
   if (details.length > 0) lines.push("", "details:", ...details);
@@ -98,6 +109,34 @@ function formatToolErrorText(error, meta) {
   }
 
   return lines.join("\n");
+}
+
+function toolCallMaxBytes(params) {
+  const value = params?.arguments?.maxBytes;
+  return Number.isInteger(value) && value >= 1024 ? value : undefined;
+}
+
+function sanitizeErrorMeta(meta) {
+  if (!meta || typeof meta !== "object") return undefined;
+  const result = {};
+  for (const [key, value] of Object.entries(meta)) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      result[key] = sanitizeErrorMeta(value);
+    } else if (typeof value === "string") {
+      result[key] = compactDiagnosticValue(value, DIAGNOSTIC_VALUE_LENGTH);
+    } else {
+      result[key] = value;
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function compactDiagnosticValue(value, maxLength) {
+  const text = String(value ?? "");
+  if (text.length <= maxLength) return text;
+  const tailLength = Math.min(96, Math.floor(maxLength * 0.25));
+  const headLength = maxLength - tailLength - 24;
+  return `${text.slice(0, headLength)}... [${text.length - headLength - tailLength} chars omitted] ...${text.slice(-tailLength)}`;
 }
 
 function isRequestObject(message) {
@@ -257,8 +296,8 @@ async function handleMessage(msg) {
     return errorResponse(id, -32601, `Unknown method: ${method}`);
   } catch (e) {
     if (!hasId) return undefined;
-    if (method === "tools/call" && !isProtocolToolError(e)) return resultResponse(id, toolErrorResult(e));
-    return errorResponse(id, rpcCode(e), e.message, e.data ?? commandErrorData(e) ?? errorData(e));
+    if (method === "tools/call" && !isProtocolToolError(e)) return resultResponse(id, toolErrorResult(e, params));
+    return errorResponse(id, rpcCode(e), compactDiagnosticValue(e.message, TOOL_ERROR_TEXT_BYTES), sanitizeErrorMeta(e.data ?? commandErrorData(e) ?? errorData(e)));
   }
 }
 

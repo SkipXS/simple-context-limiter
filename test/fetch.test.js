@@ -213,6 +213,38 @@ await describe("sc-fetch", async () => {
     assert.doesNotMatch(text, /�/);
   });
 
+  await it("threads small caller maxBytes into body download limiting", async () => {
+    const totalBytes = 256 * 1024;
+    const chunk = Buffer.alloc(512, 0x78);
+    let sentBytes = 0;
+    let requestClosed = false;
+    const server = createServer(async (req, res) => {
+      res.setHeader("content-type", "text/plain; charset=utf-8");
+      req.on("close", () => { requestClosed = true; });
+      for (let offset = 0; offset < totalBytes && !res.destroyed; offset += chunk.byteLength) {
+        sentBytes += chunk.byteLength;
+        if (!res.write(chunk)) await onceDrainOrClose(res);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      res.end();
+    });
+
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    servers.add(server);
+    const { port } = server.address();
+
+    const result = await callTool("sc-fetch", { url: `http://127.0.0.1:${port}/large`, maxBytes: 1024 });
+
+    assert.equal(result._meta.downloadLimited, true);
+    assert.equal(result._meta.truncation.reason, "download_limit");
+    assert.ok(result._meta.response.returnedBytes <= 1024);
+    assert.ok(sentBytes < totalBytes, `expected early cancellation before ${totalBytes} bytes, sent ${sentBytes}`);
+    assert.equal(requestClosed, true);
+  });
+
   await it("accepts the cache schema option while rejecting unknown args", async () => {
     const { url } = await startServer(() => ({ contentType: "text/plain", body: "ok" }));
 
@@ -244,6 +276,25 @@ async function startServer(handler, { listenHost = "127.0.0.1", urlHost = listen
 
 async function closeServer(server) {
   await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+}
+
+async function onceDrainOrClose(stream) {
+  await new Promise((resolve) => {
+    const cleanup = () => {
+      stream.off("drain", onDone);
+      stream.off("close", onDone);
+      stream.off("error", onDone);
+      stream.off("finish", onDone);
+    };
+    const onDone = () => {
+      cleanup();
+      resolve();
+    };
+    stream.once("drain", onDone);
+    stream.once("close", onDone);
+    stream.once("error", onDone);
+    stream.once("finish", onDone);
+  });
 }
 
 async function execNode(script) {

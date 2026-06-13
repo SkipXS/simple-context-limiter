@@ -102,9 +102,40 @@ try {
   tempDir = await mkdtemp(join(tmpdir(), "simple-context-limiter-pack-"));
   const pack = await run(npmCommand, [...npmArgsPrefix, "pack", "--ignore-scripts", "--json"], { shell: npmUsesShell });
   const packed = JSON.parse(pack.stdout);
+  const fileNames = new Set(packed[0].files.map((file) => file.path));
   tarballPath = resolve(packed[0].filename);
 
+  for (const fileName of [
+    "package.json",
+    "server.js",
+    "src/tools/registry.js",
+    "src/package-scripts.js",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+  ]) {
+    assert.equal(fileNames.has(fileName), true, `expected package to include ${fileName}`);
+  }
+
+  for (const fileName of [
+    "smoke-test.js",
+    "pack-smoke-test.js",
+    "check-syntax.js",
+    "scripts/output-quality-check.js",
+    "test/search.test.js",
+  ]) {
+    assert.equal(fileNames.has(fileName), false, `expected package to exclude ${fileName}`);
+  }
+  for (const fileName of fileNames) {
+    assert.equal(fileName.startsWith("scripts/"), false, `expected package to exclude scripts/: ${fileName}`);
+    assert.equal(fileName.startsWith("test/"), false, `expected package to exclude test/: ${fileName}`);
+  }
+
   await run(npmCommand, [...npmArgsPrefix, "install", "--ignore-scripts", "--no-audit", "--no-fund", tarballPath], { cwd: tempDir, shell: npmUsesShell });
+
+  const installedPackageDir = join(tempDir, "node_modules", "simple-context-limiter");
+  const installedCheck = await run(npmCommand, [...npmArgsPrefix, "run", "check"], { cwd: installedPackageDir, shell: npmUsesShell });
+  assert.match(installedCheck.stdout, /source-checkout validation command/);
 
   const child = spawn(npmCommand, [...npmArgsPrefix, "exec", "--", "simple-context-limiter"], {
     cwd: tempDir,

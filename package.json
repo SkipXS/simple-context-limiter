@@ -18,10 +18,6 @@
   "files": [
     "server.js",
     "src/",
-    "scripts/",
-    "check-syntax.js",
-    "smoke-test.js",
-    "pack-smoke-test.js",
     "README.md",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
@@ -29,16 +25,16 @@
     "LICENSE"
   ],
   "scripts": {
-    "check": "node check-syntax.js && npm run test:unit && node scripts/output-quality-check.js",
-    "quality": "node scripts/output-quality-check.js",
-    "coverage": "node --test --experimental-test-coverage test/*.test.js",
-    "test": "npm run test:unit && npm run test:smoke",
-    "test:unit": "node --test test/*.test.js",
-    "test:smoke": "node smoke-test.js",
+    "check": "node src/package-scripts.js check",
+    "quality": "node src/package-scripts.js quality",
+    "coverage": "node src/package-scripts.js coverage",
+    "test": "node src/package-scripts.js test",
+    "test:unit": "node src/package-scripts.js test:unit",
+    "test:smoke": "node src/package-scripts.js test:smoke",
     "audit": "npm audit --omit=dev",
-    "release:check": "npm pack --dry-run --ignore-scripts && node pack-smoke-test.js",
-    "prepack": "node check-syntax.js",
-    "prepublishOnly": "npm run check && npm run release:check"
+    "release:check": "node src/package-scripts.js release:check",
+    "prepack": "node src/package-scripts.js prepack",
+    "prepublishOnly": "node src/package-scripts.js prepublishOnly"
   },
   "bin": { "simple-context-limiter": "server.js" },
   "license": "MIT"

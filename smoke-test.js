@@ -1907,7 +1907,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
   const { port } = httpServer.address();
   const byteLimitedFetch = await callTool("sc-fetch", { url: `http://127.0.0.1:${port}/large`, force: true, maxLines: 20, maxBytes: 1024 });
   assert.equal(byteLimitedFetch._meta.truncated, true);
-  assert.equal(byteLimitedFetch._meta.truncation.reason, "format_bytes");
+  assert.equal(byteLimitedFetch._meta.truncation.reason, "download_limit");
   assert.ok(byteLimitedFetch._meta.response.returnedBytes <= 1024);
   try {
     await callTool("sc-fetch", { url: `http://127.0.0.1:${port}/missing`, force: true });
