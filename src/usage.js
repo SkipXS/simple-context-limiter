@@ -13,6 +13,7 @@ export function recordUsage(toolName, args, result, error, durationMs) {
   if (!project) return;
 
   const meta = result?._meta ?? {};
+  const response = meta.response ?? meta;
   const event = {
     ts: Date.now(),
     project,
@@ -20,9 +21,9 @@ export function recordUsage(toolName, args, result, error, durationMs) {
     durationMs,
     ok: !error,
     truncated: Boolean(meta.truncated),
-    totalBytes: numberOrUndefined(meta.totalBytes),
-    returnedBytes: numberOrUndefined(meta.returnedBytes),
-    savedBytes: numberOrUndefined(meta.savedBytes),
+    totalBytes: numberOrUndefined(response.totalBytes),
+    returnedBytes: numberOrUndefined(response.returnedBytes),
+    savedBytes: numberOrUndefined(response.savedBytes),
     exitCode: numberOrUndefined(meta.exitCode ?? error?.status),
     errorCode: error?.code,
     commandKind: classifyCommand(args?.command),

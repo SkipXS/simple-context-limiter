@@ -50,6 +50,7 @@ export async function readManyTool(args, toolName = "read") {
     maxTotalBytes = MAX_BYTES,
     fromLine,
     toLine,
+    lineNumbers = false,
   } = args ?? {};
   if (!Array.isArray(paths) || paths.length === 0) {
     invalidParams(`${toolName} requires a non-empty paths array`);
@@ -57,7 +58,9 @@ export async function readManyTool(args, toolName = "read") {
   if (paths.length > 20) {
     invalidParams(`${toolName} paths must contain at most 20 files`);
   }
+  if (typeof lineNumbers !== "boolean") invalidParams(`${toolName} lineNumbers must be a boolean when provided`);
   const rangeMode = fromLine !== undefined || toLine !== undefined;
+  if (lineNumbers && !rangeMode) invalidParams(`${toolName} lineNumbers requires fromLine or toLine`);
   let rangePath;
   if (rangeMode) {
     if (typeof primaryPath === "string" && primaryPath.trim() !== "") rangePath = primaryPath;
@@ -78,7 +81,7 @@ export async function readManyTool(args, toolName = "read") {
     if (typeof filePath !== "string" || filePath.trim() === "") {
       invalidParams(`${toolName} paths must contain non-empty strings`);
     }
-    const previewArgs = { path: filePath, maxLines: lineLimit, maxBytes: byteLimit };
+    const previewArgs = { path: filePath, maxLines: lineLimit, maxBytes: byteLimit, lineNumbers: lineNumbers && filePath === rangePath };
     if (filePath === rangePath) {
       previewArgs.fromLine = fromLine;
       previewArgs.toLine = toLine;
@@ -92,7 +95,7 @@ export async function readManyTool(args, toolName = "read") {
     .map((result) => `--- ${result._meta.relativePath ?? result._meta.path} ---\n${result.content[0].text}`)
     .join("\n\n");
   const formatted = formatOutput(combined, totalLineLimit, totalLimit);
-  const totalBytes = results.reduce((sum, result) => sum + result._meta.totalBytes, 0);
+  const totalBytes = results.reduce((sum, result) => sum + result._meta.response.totalBytes, 0);
   const contextSavings = savingsForReturnedBytes(totalBytes, formatted.returnedBytes);
   const meta = withResponseMeta({
     filesRequested: paths.length,
@@ -106,9 +109,7 @@ export async function readManyTool(args, toolName = "read") {
       path: result._meta.path,
       relativePath: result._meta.relativePath,
       sizeBytes: result._meta.sizeBytes,
-      totalBytes: result._meta.totalBytes,
-      returnedBytes: result._meta.returnedBytes,
-      savedBytes: result._meta.savedBytes,
+      response: result._meta.response,
       truncated: result._meta.truncated,
       fileReadLimited: result._meta.fileReadLimited,
       fromLine: result._meta.fromLine,
@@ -119,6 +120,7 @@ export async function readManyTool(args, toolName = "read") {
       scanLimited: result._meta.scanLimited,
       rangeLimited: result._meta.rangeLimited,
       scanTimedOut: result._meta.scanTimedOut,
+      lineNumbers: result._meta.lineNumbers,
     })),
   });
   await recordStats(toolName, meta);
@@ -146,12 +148,13 @@ async function mapLimited(items, limit, mapper) {
 }
 
 async function readFilePreview(args, toolName) {
-  const { path: filePath, maxLines = MAX_LINES, maxBytes = MAX_BYTES, fromLine, toLine } = args ?? {};
+  const { path: filePath, maxLines = MAX_LINES, maxBytes = MAX_BYTES, fromLine, toLine, lineNumbers = false } = args ?? {};
   if (typeof filePath !== "string" || filePath.trim() === "") {
     invalidParams(`${toolName} requires a non-empty path string`);
   }
   const lineLimit = validateInteger(maxLines, `${toolName} maxLines`, 10, 500);
   const byteLimit = validateInteger(maxBytes, `${toolName} maxBytes`, 1024, MAX_BYTES);
+  if (typeof lineNumbers !== "boolean") invalidParams(`${toolName} lineNumbers must be a boolean when provided`);
 
   const resolved = path.resolve(filePath);
   const stat = await fs.promises.stat(resolved);
@@ -162,11 +165,13 @@ async function readFilePreview(args, toolName) {
   }
 
   const rangeMode = fromLine !== undefined || toLine !== undefined;
+  if (lineNumbers && !rangeMode) invalidParams(`${toolName} lineNumbers requires fromLine or toLine`);
   const range = rangeMode ? normalizeLineRange(fromLine, toLine) : undefined;
   const { text, limited, rangeLimited, returnedLines, scannedLines, scannedBytes, scanLimited, scanTimedOut } = rangeMode
     ? await readLineRange(resolved, range.fromLine, range.toLine, lineLimit, MAX_READ_BYTES, MAX_READ_BYTES, READ_RANGE_TIMEOUT_MS)
     : await readLimitedFile(resolved, stat.size, MAX_READ_BYTES);
-  const formatted = formatOutput(text, lineLimit, byteLimit);
+  const displayText = lineNumbers ? addLineNumbers(text, range?.fromLine ?? 1) : text;
+  const formatted = formatOutput(displayText, lineLimit, byteLimit);
   const contextSavings = savingsForReturnedBytes(stat.size, formatted.returnedBytes);
   const meta = withResponseMeta({
     path: resolved,
@@ -187,6 +192,7 @@ async function readFilePreview(args, toolName) {
     scanLimited,
     rangeLimited,
     scanTimedOut,
+    lineNumbers,
   });
   return {
     content: [{ type: "text", text: formatted.text }],
@@ -203,6 +209,13 @@ function savingsForReturnedBytes(totalBytes, returnedBytes) {
     savedPercent: totalBytes > 0 ? Math.round((savedBytes / totalBytes) * 100) : 0,
     estimatedTokensSaved: Math.ceil(savedBytes / 4),
   };
+}
+
+function addLineNumbers(text, firstLine) {
+  if (text === "") return text;
+  const lines = text.split("\n");
+  const width = String(firstLine + lines.length - 1).length;
+  return lines.map((line, index) => `${String(firstLine + index).padStart(width, " ")}: ${line}`).join("\n");
 }
 
 function normalizeLineRange(fromLine, toLine) {

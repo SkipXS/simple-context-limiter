@@ -29,6 +29,16 @@ export function savingsMeta(formatted) {
   };
 }
 
+const RESPONSE_META_KEYS = new Set([
+  "totalLines",
+  "totalBytes",
+  "totalBytesKnown",
+  "returnedBytes",
+  "savedBytes",
+  "savedPercent",
+  "estimatedTokensSaved",
+]);
+
 export function responseMeta(meta) {
   return {
     totalLines: meta.totalLines,
@@ -43,7 +53,11 @@ export function responseMeta(meta) {
 }
 
 export function withResponseMeta(meta) {
-  return { ...meta, response: responseMeta(meta) };
+  const compact = {};
+  for (const [key, value] of Object.entries(meta)) {
+    if (!RESPONSE_META_KEYS.has(key)) compact[key] = value;
+  }
+  return { ...compact, response: responseMeta(meta) };
 }
 
 export function relativePath(filePath, root = process.cwd()) {

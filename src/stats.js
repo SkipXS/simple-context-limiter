@@ -75,8 +75,9 @@ export async function getStats() {
 }
 
 function addCounter(target, meta) {
-  const totalBytes = meta.totalBytes ?? 0;
-  const returnedBytes = Math.min(meta.returnedBytes ?? 0, totalBytes);
+  const response = meta.response ?? meta;
+  const totalBytes = response.totalBytes ?? 0;
+  const returnedBytes = Math.min(response.returnedBytes ?? 0, totalBytes);
   const savedBytes = Math.max(0, totalBytes - returnedBytes);
 
   target.calls++;

@@ -5,7 +5,7 @@ import { MAX_BYTES, MAX_LINES, MAX_READ_BYTES, RG_NAME } from "../constants.js";
 import { formatOutput } from "../output.js";
 import { commandError, runProcessLines } from "../process.js";
 import { recordStats } from "../stats.js";
-import { invalidParams, omission, relativePath, savingsForText, savingsMeta, validateInteger, withResponseMeta } from "./shared.js";
+import { invalidParams, relativePath, savingsForText, savingsMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 const MATCH_SEPARATOR = "\x1f";
 const CONTEXT_SEPARATOR = "\x1e";
@@ -219,7 +219,7 @@ export async function searchTool(args) {
   const matchLimited = result.truncated || result.outputTooLarge || matches.length > limit;
   const originalText = matches.join("\n");
   const text = matchLimited
-    ? [...shown, omission("matches")].join("\n")
+    ? [...shown, truncatedMatchesLine(shown.length)].join("\n")
     : originalText || "(no matches)";
   const formatted = formatOutput(text, lineLimit, byteLimit);
   const searchSavings = matchLimited ? savingsForText(originalText, formatted.text) : savingsMeta(formatted);
@@ -243,6 +243,10 @@ export async function searchTool(args) {
     content: [{ type: "text", text: formatted.text }],
     _meta: meta,
   };
+}
+
+function truncatedMatchesLine(shownMatches) {
+  return `[truncated after ${shownMatches} shown matches; more matches exist]`;
 }
 
 function normalizeAstLanguage(language, searchPath, include) {
@@ -339,7 +343,7 @@ function parseAstGrepLine(line) {
 
 function formatAstMatches(matches, limited) {
   const lines = matches.flatMap(formatAstMatch);
-  if (limited) lines.push(omission("matches"));
+  if (limited) lines.push(truncatedMatchesLine(matches.length));
   return lines.join("\n");
 }
 
@@ -466,7 +470,7 @@ function limitRgContext(lines, maxMatches, contextLines) {
     }
   }
 
-  if (matchLimited) output.push(omission("matches"));
+  if (matchLimited) output.push(truncatedMatchesLine(shownMatches));
   return { text: output.join("\n"), matchesRead, shownMatches, matchLimited };
 }
 

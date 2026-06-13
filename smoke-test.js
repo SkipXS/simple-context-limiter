@@ -125,19 +125,15 @@ function isPowerShellConfigured() {
 }
 
 function assertSavingsMeta(meta) {
-  assert.equal(typeof meta.returnedBytes, "number");
-  assert.equal(typeof meta.savedBytes, "number");
-  assert.equal(typeof meta.savedPercent, "number");
-  assert.equal(typeof meta.estimatedTokensSaved, "number");
-  assert.ok(meta.returnedBytes >= 0);
-  assert.ok(meta.savedBytes >= 0);
-  assert.ok(meta.savedPercent >= 0);
-  assert.ok(meta.estimatedTokensSaved >= 0);
   assert.equal(typeof meta.response, "object");
   assert.equal(typeof meta.response.returnedBytes, "number");
   assert.equal(typeof meta.response.savedBytes, "number");
   assert.equal(typeof meta.response.savedPercent, "number");
   assert.equal(typeof meta.response.estimatedTokensSaved, "number");
+  assert.ok(meta.response.returnedBytes >= 0);
+  assert.ok(meta.response.savedBytes >= 0);
+  assert.ok(meta.response.savedPercent >= 0);
+  assert.ok(meta.response.estimatedTokensSaved >= 0);
 }
 
 function findSchemaKeyword(value, banned, path = "inputSchema") {
@@ -514,6 +510,8 @@ try {
   assert.ok(ok.result.content[0].text.startsWith("ok"));
   assert.equal(ok.result._meta.truncated, false);
   assertSavingsMeta(ok.result._meta);
+  assert.equal(Object.hasOwn(ok.result._meta, "returnedBytes"), false);
+  assert.equal(Object.hasOwn(ok.result._meta, "totalBytes"), false);
   assert.equal(typeof ok.result._meta.durationMs, "number");
   assert.equal(ok.result._meta.timeoutMs, 120_000);
   assert.equal(typeof ok.result._meta.shell, "string");
@@ -540,8 +538,8 @@ try {
     },
   });
   assert.equal(byteLimitedRun.result._meta.truncated, true);
-  assert.ok(byteLimitedRun.result._meta.returnedBytes <= 1024);
-  assert.ok(byteLimitedRun.result._meta.savedBytes > 0);
+  assert.ok(byteLimitedRun.result._meta.response.returnedBytes <= 1024);
+  assert.ok(byteLimitedRun.result._meta.response.savedBytes > 0);
 
   const outputTooLargeCommand = isPowerShellConfigured()
     ? `& ${shellQuote(process.execPath)} -e "process.stdout.write('x'.repeat(50000))"`
@@ -563,9 +561,9 @@ try {
   const outputTooLargeMeta = JSON.parse(outputTooLargeRun.stdout.trim());
   assert.equal(outputTooLargeMeta.truncated, true);
   assert.equal(outputTooLargeMeta.outputTooLarge, true);
-  assert.equal(outputTooLargeMeta.totalBytesKnown, false);
+  assert.equal(outputTooLargeMeta.response.totalBytesKnown, false);
   assert.ok(Object.hasOwn(outputTooLargeMeta, "exitCode") || Object.hasOwn(outputTooLargeMeta, "signal"));
-  assert.ok(outputTooLargeMeta.savedBytes > 0);
+  assert.ok(outputTooLargeMeta.response.savedBytes > 0);
 
   const invalidRunMaxLines = await request("tools/call", {
     name: "run",
@@ -714,6 +712,8 @@ try {
   });
   assert.equal(failed.result.isError, true);
   assert.equal(failed.result._meta.exitCode, 7);
+  assert.equal(failed.result._meta.truncated, false);
+  assert.equal(failed.result._meta.response.truncated, false);
   assert.equal(typeof failed.result._meta.response.returnedBytes, "number");
   assert.match(failed.result.content[0].text, /details:\nexitCode: 7/);
   assert.match(failed.result.content[0].text, /stderr:\nruntime boom/);
@@ -741,11 +741,18 @@ try {
   });
   assert.equal(read.result._meta.truncated, true);
   assertSavingsMeta(read.result._meta);
-  assert.ok(read.result._meta.savedBytes > 0);
+  assert.ok(read.result._meta.response.savedBytes > 0);
   assert.equal(read.result._meta.fileReadLimited, true);
   assert.match(read.result.content[0].text, /\[omitted: \d+ (bytes|lines)\]/);
   assert.match(read.result.content[0].text, /file line 0/);
   assert.match(read.result.content[0].text, /file line 299/);
+
+  const invalidNumberedPreview = await request("tools/call", {
+    name: "read",
+    arguments: { path: largeFile, lineNumbers: true, maxLines: 20 },
+  });
+  assert.equal(invalidNumberedPreview.error.code, -32602);
+  assert.match(invalidNumberedPreview.error.message, /lineNumbers requires/);
 
   const readMany = await request("tools/call", {
     name: "read",
@@ -754,7 +761,7 @@ try {
   assert.equal(readMany.result._meta.filesRequested, 2);
   assert.equal(readMany.result._meta.filesRead, 2);
   assert.equal(readMany.result._meta.truncated, true);
-  assert.ok(readMany.result._meta.savedBytes > 0);
+  assert.ok(readMany.result._meta.response.savedBytes > 0);
   assert.equal(readMany.result._meta.files.length, 2);
   assert.match(readMany.result.content[0].text, /large\.txt/);
   assert.match(readMany.result.content[0].text, /dash\.txt/);
@@ -815,7 +822,7 @@ try {
   });
   assert.equal(limitedRead.result._meta.fileReadLimited, true);
   assert.equal(limitedRead.result._meta.truncated, true);
-  assert.ok(limitedRead.result._meta.savedBytes > 0);
+  assert.ok(limitedRead.result._meta.response.savedBytes > 0);
   assert.doesNotMatch(limitedRead.result.content[0].text, /�/);
 
   const byteLimitedRead = await request("tools/call", {
@@ -823,7 +830,7 @@ try {
     arguments: { path: largeOneLineFile, maxLines: 20, maxBytes: 1024 },
   });
   assert.equal(byteLimitedRead.result._meta.truncated, true);
-  assert.ok(byteLimitedRead.result._meta.returnedBytes <= 1024);
+  assert.ok(byteLimitedRead.result._meta.response.returnedBytes <= 1024);
 
   const rangeRead = await request("tools/call", {
     name: "read",
@@ -838,6 +845,14 @@ try {
   assert.match(rangeRead.result.content[0].text, /file line 290/);
   assert.match(rangeRead.result.content[0].text, /file line 294/);
   assert.doesNotMatch(rangeRead.result.content[0].text, /file line 289/);
+
+  const numberedRangeRead = await request("tools/call", {
+    name: "read",
+    arguments: { path: largeFile, fromLine: 291, toLine: 292, lineNumbers: true, maxLines: 20 },
+  });
+  assert.equal(numberedRangeRead.result._meta.lineNumbers, true);
+  assert.match(numberedRangeRead.result.content[0].text, /^291: file line 290/m);
+  assert.match(numberedRangeRead.result.content[0].text, /^292: file line 291/m);
 
   const limitedRangeRead = await request("tools/call", {
     name: "read",
@@ -854,7 +869,7 @@ try {
   assert.equal(byteLimitedRangeRead.result._meta.truncated, true);
   assert.equal(byteLimitedRangeRead.result._meta.fileReadLimited, true);
   assert.equal(byteLimitedRangeRead.result._meta.returnedLines, 1);
-  assert.ok(byteLimitedRangeRead.result._meta.savedBytes > 0);
+  assert.ok(byteLimitedRangeRead.result._meta.response.savedBytes > 0);
   assert.match(byteLimitedRangeRead.result.content[0].text, /^x+/);
 
   const scanLimitedRangeRead = await request("tools/call", {
@@ -880,7 +895,7 @@ try {
   });
   assert.equal(newlineLimitedRangeRead.result._meta.truncated, true);
   assert.equal(newlineLimitedRangeRead.result._meta.fileReadLimited, true);
-  assert.ok(newlineLimitedRangeRead.result._meta.returnedBytes <= 2048);
+  assert.ok(newlineLimitedRangeRead.result._meta.response.returnedBytes <= 2048);
   assert.ok(Buffer.byteLength(newlineLimitedRangeRead.result.content[0].text, "utf8") <= 2048);
 
   const invalidRangeRead = await request("tools/call", {
@@ -964,7 +979,7 @@ try {
     assert.equal(typeof grepContext.result._meta.rgPath, "string");
     assert.equal(grepContext.result._meta.shownMatches, 3);
     assert.equal(grepContext.result._meta.totalMatchesKnown, false);
-    assert.match(grepContext.result.content[0].text, /\[omitted: more matches\]/);
+    assert.match(grepContext.result.content[0].text, /\[truncated after 3 shown matches; more matches exist\]/);
 
     const limitedContext = await request("tools/call", {
       name: "search",
@@ -977,7 +992,7 @@ try {
     assert.doesNotMatch(limitedContext.result.content[0].text, /before-two-a/);
     assert.doesNotMatch(limitedContext.result.content[0].text, /before-two-b/);
     assert.doesNotMatch(limitedContext.result.content[0].text, /match-two/);
-    assert.match(limitedContext.result.content[0].text, /\[omitted: more matches\]/);
+    assert.match(limitedContext.result.content[0].text, /\[truncated after 1 shown matches; more matches exist\]/);
 
     const byteLimitedSearch = await request("tools/call", {
       name: "search",
@@ -985,14 +1000,14 @@ try {
     });
     assert.ok(byteLimitedSearch.result, JSON.stringify(byteLimitedSearch));
     assert.equal(byteLimitedSearch.result._meta.truncated, true);
-    assert.ok(byteLimitedSearch.result._meta.returnedBytes <= 1024);
+    assert.ok(byteLimitedSearch.result._meta.response.returnedBytes <= 1024);
 
     const noMatchSearch = await request("tools/call", {
       name: "search",
       arguments: { pattern: "does-not-exist", path: largeFile, maxMatches: 5 },
     });
     assert.equal(noMatchSearch.result.content[0].text, "(no matches)");
-    assert.equal(noMatchSearch.result._meta.totalBytes, noMatchSearch.result._meta.returnedBytes);
+    assert.equal(noMatchSearch.result._meta.response.totalBytes, noMatchSearch.result._meta.response.returnedBytes);
     assert.equal(noMatchSearch.result._meta.empty, true);
     assert.equal(noMatchSearch.result._meta.emptyReason, "no_matches");
 
@@ -1001,7 +1016,7 @@ try {
       arguments: { pattern: "does-not-exist", path: largeFile, maxMatches: 5 },
     });
     assert.equal(noMatchGrepContext.result.content[0].text, "(no matches)");
-    assert.equal(noMatchGrepContext.result._meta.totalBytes, noMatchGrepContext.result._meta.returnedBytes);
+    assert.equal(noMatchGrepContext.result._meta.response.totalBytes, noMatchGrepContext.result._meta.response.returnedBytes);
     assert.equal(noMatchGrepContext.result._meta.empty, true);
     assert.equal(noMatchGrepContext.result._meta.emptyReason, "no_matches");
   }
@@ -1132,7 +1147,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
   assert.match(fakeAstPayload.text, /src\/example\.ts:5:3: target\(\)/);
   assert.match(fakeAstPayload.text, /> 5: target\(\);/);
   assert.match(fakeAstPayload.text, / 4: before\(\);/);
-  assert.match(fakeAstPayload.text, /\[omitted: more matches\]/);
+  assert.match(fakeAstPayload.text, /\[truncated after 1 shown matches; more matches exist\]/);
 
   const missingAstGrepRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
     const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
@@ -1170,7 +1185,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
   assert.ok(fetched.result, JSON.stringify(fetched));
   assert.equal(fetched.result._meta.truncated, true);
   assertSavingsMeta(fetched.result._meta);
-  assert.ok(fetched.result._meta.savedBytes > 0);
+  assert.ok(fetched.result._meta.response.savedBytes > 0);
   assert.equal(fetched.result._meta.downloadLimited, true);
   assert.equal(fetched.result._meta.status, 200);
   assert.match(fetched.result._meta.contentType, /html/);
@@ -1345,7 +1360,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
       const diff = await callTool('diff', { maxFiles: 1, maxHunks: 1, maxBytes: 4096 });
       const blankPathDiff = await callTool('diff', { path: '', maxBytes: 4096 });
       const changedFiles = await callTool('diff', { mode: 'status', maxBytes: 4096 });
-      const history = await callTool('diff', { mode: 'history', maxFiles: 5, maxBytes: 4096 });
+      const history = await callTool('diff', { mode: 'history', maxCommits: 5, maxBytes: 4096 });
       const noStagedStatus = await callTool('diff', { mode: 'status', staged: true, maxBytes: 4096 });
       const noStagedDiff = await callTool('diff', { staged: true, maxBytes: 4096 });
       console.log(JSON.stringify({ diff: { text: diff.content[0].text, meta: diff._meta }, blankPathDiff: { text: blankPathDiff.content[0].text, meta: blankPathDiff._meta }, changedFiles: { text: changedFiles.content[0].text, meta: changedFiles._meta }, history: { text: history.content[0].text, meta: history._meta }, noStagedStatus: { text: noStagedStatus.content[0].text, meta: noStagedStatus._meta }, noStagedDiff: { text: noStagedDiff.content[0].text, meta: noStagedDiff._meta } }));
@@ -1370,7 +1385,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
     assert.equal(diffPayload.diff.meta.filesLimited, true);
     assert.equal(diffPayload.diff.meta.hunksLimited, true);
     assert.equal(diffPayload.diff.meta.truncated, true);
-    assert.ok(diffPayload.diff.meta.returnedBytes <= 4096);
+    assert.ok(diffPayload.diff.meta.response.returnedBytes <= 4096);
     assertSavingsMeta(diffPayload.diff.meta);
     assert.match(diffPayload.blankPathDiff.text, /Diff stat:/);
     assert.equal(diffPayload.blankPathDiff.meta.filesChanged, 2);
@@ -1460,12 +1475,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
   assert.equal(typeof parsedStats.response, "object");
   assert.equal(typeof parsedStats.response.totalBytes, "number");
   assert.equal(typeof parsedStats.response.returnedBytes, "number");
-  assert.equal(typeof parsedStats.responseTotalBytes, "number");
-  assert.equal(typeof parsedStats.responseReturnedBytes, "number");
-  assert.equal(typeof parsedStats.responseSavedBytes, "number");
-  assert.equal(typeof parsedStats.responseSavedPercent, "number");
-  assert.equal(typeof parsedStats.responseEstimatedTokensSaved, "number");
-  assert.ok(parsedStats.responseReturnedBytes <= parsedStats.responseTotalBytes);
+  assert.ok(parsedStats.response.returnedBytes <= parsedStats.response.totalBytes);
   assert.ok(parsedStats.savedBytes > 0);
   assert.ok(parsedStats.estimatedTokensSaved > 0);
 
@@ -1667,7 +1677,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
   const { port } = httpServer.address();
   const byteLimitedFetch = await callTool("fetch", { url: `http://127.0.0.1:${port}/large`, force: true, maxLines: 20, maxBytes: 1024 });
   assert.equal(byteLimitedFetch._meta.truncated, true);
-  assert.ok(byteLimitedFetch._meta.returnedBytes <= 1024);
+  assert.ok(byteLimitedFetch._meta.response.returnedBytes <= 1024);
   try {
     await callTool("fetch", { url: `http://127.0.0.1:${port}/missing`, force: true });
     assert.fail("expected fetch to reject HTTP errors");

@@ -70,7 +70,7 @@ function formatGuidance(report) {
   lines.push("", "Practical guidance:");
   lines.push("Use diff mode=history instead of raw git log for compact commit history.");
   lines.push("Use read path with fromLine/toLine for targeted ranges; use paths for additional non-ranged files.");
-  lines.push("When _meta.truncated is true, retry with a narrower path/range/query before using raw shell output.");
+  lines.push("When _meta.truncated or _meta.response.truncated is true, retry with a narrower path/range/query before using raw shell output.");
 
   return lines.join("\n");
 }
@@ -105,13 +105,7 @@ async function statsResult(maxLines, maxBytes) {
     content: [{ type: "text", text: formatted.text }],
     _meta: {
       ...stats,
-      totalLines: formatted.totalLines,
       response,
-      responseTotalBytes: response.totalBytes,
-      responseReturnedBytes: response.returnedBytes,
-      responseSavedBytes: response.savedBytes,
-      responseSavedPercent: response.savedPercent,
-      responseEstimatedTokensSaved: response.estimatedTokensSaved,
       truncated: formatted.truncated,
       durationMs: Date.now() - started,
     },

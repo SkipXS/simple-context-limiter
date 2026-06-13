@@ -11,6 +11,7 @@ export async function diffTool(args) {
     staged = false,
     stat = true,
     maxFiles = 20,
+    maxCommits,
     maxHunks = 20,
     maxLines = MAX_LINES,
     maxBytes = MAX_BYTES,
@@ -30,12 +31,13 @@ export async function diffTool(args) {
   }
 
   const fileLimit = validateInteger(maxFiles, "diff maxFiles", 1, 100);
+  const commitLimit = maxCommits === undefined ? fileLimit : validateInteger(maxCommits, "diff maxCommits", 1, 100);
   const hunkLimit = validateInteger(maxHunks, "diff maxHunks", 1, 200);
   const lineLimit = validateInteger(maxLines, "diff maxLines", 10, 200);
   const byteLimit = validateInteger(maxBytes, "diff maxBytes", 1024, MAX_BYTES);
 
   if (mode === "status") return await statusTool(normalizedDiffPath, staged, lineLimit, byteLimit);
-  if (mode === "history") return await historyTool(normalizedDiffPath, fileLimit, lineLimit, byteLimit);
+  if (mode === "history") return await historyTool(normalizedDiffPath, commitLimit, lineLimit, byteLimit);
 
   const started = Date.now();
   const diffArgs = gitDiffArgs(staged, [], normalizedDiffPath);

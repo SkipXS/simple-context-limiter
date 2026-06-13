@@ -32,12 +32,19 @@ Response `_meta` includes:
 
 ```json
 {
-  "totalLines": 1200,
-  "totalBytes": 48000,
   "truncated": true,
   "durationMs": 230,
   "timeoutMs": 120000,
-  "shell": "bash"
+  "shell": "bash",
+  "response": {
+    "totalLines": 1200,
+    "totalBytes": 48000,
+    "returnedBytes": 16384,
+    "savedBytes": 31616,
+    "savedPercent": 66,
+    "estimatedTokensSaved": 7904,
+    "truncated": true
+  }
 }
 ```
 
@@ -61,11 +68,13 @@ Reads local UTF-8 text files and returns safe previews. Use `path` for one file 
 { "path": "logs/app.log", "maxLines": 100, "maxBytes": 16384 }
 ```
 
-Read a specific 1-based line range after a search result:
+Read a specific 1-based line range after a search result; add `lineNumbers` when citations or review comments need stable line references:
 
 ```json
-{ "path": "logs/app.log", "fromLine": 28470, "toLine": 28520, "maxLines": 100, "maxBytes": 16384 }
+{ "path": "logs/app.log", "fromLine": 28470, "toLine": 28520, "lineNumbers": true, "maxLines": 100, "maxBytes": 16384 }
 ```
+
+`lineNumbers` is intentionally limited to ranged reads so truncated head/tail previews never show misleading source line numbers.
 
 For larger targeted source sections, raise `maxLines` up to 500 while keeping `fromLine` and `toLine` narrow enough to stay useful:
 
@@ -87,7 +96,7 @@ The tool accepts at most 20 merged paths. Each file uses the same preview behavi
 
 ### `search`
 
-Searches local files with ripgrep by default and returns bounded `file:line:match` output. Pass `contextLines` when you need small surrounding context windows. Override with `maxMatches`, `maxLines`, or `maxBytes` per call.
+Searches local files with ripgrep by default and returns bounded `file:line:match` output. Pass `contextLines` when you need small surrounding context windows. Override with `maxMatches`, `maxLines`, or `maxBytes` per call. When matches are limited, the final line says how many were shown and that more matches exist.
 Relative search paths are resolved from the MCP server's `process.cwd()`.
 
 ```json
@@ -126,7 +135,7 @@ simple-context-limiter discovers `sg` or `ast-grep` on `PATH`, or use `SIMPLE_CO
 
 Use this before broad file reads or recursive shell commands. Pick a mode for the discovery shape you need:
 
-- `summary` summarizes package metadata, scripts, configs, README preview, and tracked-file count.
+- `summary` summarizes package metadata, scripts, configs, a compact README preview, and tracked-file count.
 - `files` lists tracked files with optional regex filtering.
 - `tree` shows a bounded tree and skips heavy folders like `.git` and `node_modules`.
 - `outline` extracts imports, exports, functions, classes, and top-level declarations from one source file.
@@ -208,10 +217,10 @@ Show compact changed-file status instead of diff hunks:
 Show compact commit history instead of raw `git log`:
 
 ```json
-{ "mode": "history", "maxFiles": 20, "maxBytes": 16384 }
+{ "mode": "history", "maxCommits": 20, "maxBytes": 16384 }
 ```
 
-In `mode: "history"`, `maxFiles` acts as the maximum commit count and `path` filters history to a file or directory.
+In `mode: "history"`, `maxCommits` controls the commit count and `path` filters history to a file or directory. `maxFiles` is still accepted as a legacy alias for the commit count.
 
 ### `usage`
 
@@ -236,24 +245,13 @@ Large output is returned as head + tail with compact ASCII truncation markers:
 
 The response always includes `_meta.truncated`. If it is `true`, the LLM can re-run with a higher `maxLines` or `maxBytes`, pre-filter the command, read a narrower `read` line range, or fall back to the native client tool when every line is genuinely needed.
 
-Each tool response also reports compact savings stats in `_meta.response`: `totalBytes`, `returnedBytes`, `savedBytes`, `savedPercent`, `estimatedTokensSaved`, and `truncated`. Common top-level aliases such as `_meta.returnedBytes` and `_meta.savedBytes` are kept for compatibility. Empty/no-result responses set `_meta.empty: true` plus a compact `emptyReason` such as `no_matches`, `no_output`, or `no_diff`. Token savings are approximate and use `savedBytes / 4` as a dependency-free estimate. In `usage` `mode: "stats"`, top-level totals describe aggregate usage stats; formatted response savings are available in `_meta.response` and the legacy `responseReturnedBytes`, `responseSavedBytes`, `responseSavedPercent`, and `responseEstimatedTokensSaved` fields.
+Each tool response reports compact savings stats in `_meta.response`: `totalBytes`, `returnedBytes`, `savedBytes`, `savedPercent`, `estimatedTokensSaved`, and `truncated`. Those byte counters are no longer duplicated at the top level of `_meta`; top-level fields are reserved for tool-specific facts such as `durationMs`, `emptyReason`, `exitCode`, `shownMatches`, or `filesChanged`. Empty/no-result responses set `_meta.empty: true` plus a compact reason such as `no_matches`, `no_output`, or `no_diff`. Token savings are approximate and use `savedBytes / 4` as a dependency-free estimate. In `usage` `mode: "stats"`, top-level totals describe aggregate usage stats while formatted response savings remain in `_meta.response`.
 
 `maxBytes` controls the formatted response preview size and accepts values from 1024 to 32768. It does not raise the separate file-read or download safety caps.
 
 Aggregate stats are stored globally in `~/.simple-context-limiter/stats.json`. They contain only numeric counters grouped by project path and tool name, not commands, file paths, URLs, or content.
 
-The server also injects MCP startup instructions telling the LLM to default to these tools for exploratory commands, logs, test/build output, file previews, searches, web pages, and git diff previews:
-
-- `run` instead of shell/terminal commands that may produce large output
-- `logs` instead of plain command output for tests, builds, lints, server logs, and other error-heavy output
-- `read` instead of `cat`, `type`, or `Get-Content` for file previews
-- `search` instead of raw `rg` or `grep` commands for bounded search results
-- `discover` before broad file reads
-- `fetch` instead of raw web fetches for pages that are not needed as raw HTML
-- `diff` instead of raw `git diff` for compact working-tree or staged diff previews
-- `usage` when you want to inspect accumulated current-project savings or usage reports
-
-Native shell, read, fetch, or diff tools remain appropriate when complete output, exact stderr/exit behavior, interactivity, or unsupported behavior is specifically needed. If `_meta.truncated` is true, retry with a narrower query/range or higher `maxLines`/`maxBytes` before falling back to native tools.
+The server also injects short MCP startup instructions that tell the LLM to prefer these bounded tools for shell output, logs, file previews, local search, repo discovery, readable web pages, git previews, and usage guidance. Native shell, read, fetch, or diff tools remain appropriate when complete output, exact stderr/exit behavior, interactivity, raw HTML, or unsupported behavior is specifically needed. If `_meta.truncated` or `_meta.response.truncated` is true, retry with a narrower query/range/path or higher `maxLines`/`maxBytes` before falling back to native tools.
 
 ## Errors
 
@@ -272,7 +270,12 @@ Runtime failures inside a valid `tools/call` usually return a normal JSON-RPC re
   "result": {
     "content": [{ "type": "text", "text": "Command failed: npm test (exited with code 1)\n\ndetails:\nexitCode: 1\n\nstderr:\nAssertionError: expected true" }],
     "isError": true,
-    "_meta": { "exitCode": 1, "stderr": "AssertionError: expected true" }
+    "_meta": {
+      "exitCode": 1,
+      "stderr": "AssertionError: expected true",
+      "truncated": false,
+      "response": { "totalLines": 7, "totalBytes": 128, "returnedBytes": 128, "savedBytes": 0, "truncated": false }
+    }
   }
 }
 ```

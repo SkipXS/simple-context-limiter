@@ -48,6 +48,7 @@ function toolErrorResult(error) {
     isError: true,
     _meta: {
       ...diagnosticMeta,
+      truncated: false,
       response: {
         totalLines: text.split("\n").length,
         totalBytes: returnedBytes,
@@ -145,18 +146,9 @@ async function runToolCallLimited(fn) {
   }
 }
 
-const instructions = "Default to run, logs, read, search, discover, fetch, diff, and usage for exploratory commands, logs, file previews, searches, repo overview, tests, web pages, git previews, and usage stats. "
-  + "Use run instead of bash/terminal for commands that may produce large output. "
-  + "Use logs instead of run for tests, builds, lints, server logs, and other output where errors may appear in the middle. "
-  + "Use read instead of cat/type/Get-Content for local file previews; pass paths when you need several known files. "
-  + "Use search instead of raw rg/grep commands for bounded local search results; pass contextLines when you need surrounding lines. "
-  + "Use discover for repo summaries, tracked-file lists, directory trees, and source outlines before broad file reads. "
-  + "Use diff with mode=status before full diffs when you only need changed file names/status, and mode=history instead of raw git log for compact commit history. "
-  + "Use fetch instead of web_fetch/webfetch for pages you do not need as raw HTML. "
-  + "Use diff instead of raw git diff when reviewing working tree or staged changes. "
-  + "Use usage for aggregate savings stats, local usage-pattern reports, or mode=guidance suggestions. "
-  + "Use native shell/read/fetch/diff tools only when you specifically need complete output, exact stderr/exit behavior, interactivity, or unsupported behavior. "
-  + "Read the _meta field after each call: if truncated is true, retry with a narrower query/range or higher maxLines/maxBytes before falling back to native tools.";
+const instructions = "Prefer these bounded tools to keep context small: run for shell stdout, logs for tests/builds/lints/logs, read for file previews, search for local text/AST search, discover before broad repo reads, fetch for readable web pages, diff for git status/diff/history, and usage for savings/guidance. "
+  + "Use native client tools only when you need complete output, exact stderr/exit semantics, interactivity, raw HTML, or unsupported behavior. "
+  + "After each call, check _meta.truncated or _meta.response.truncated; if true, retry with a narrower query/path/range or higher maxLines/maxBytes before falling back.";
 
 let initializeAccepted = false;
 let sessionInitialized = false;

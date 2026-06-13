@@ -213,8 +213,8 @@ async function summaryMode(args) {
     lines.push(`Dependencies: ${Object.keys(packageJson.dependencies ?? {}).length} runtime, ${Object.keys(packageJson.devDependencies ?? {}).length} dev`);
   }
 
-  const readmeLines = await readFirstLinesIfExists(path.join(root, "README.md"), 8);
-  if (readmeLines.length > 0) lines.push("", "README preview:", ...readmeLines);
+  const readmeLines = await readReadmePreviewIfExists(path.join(root, "README.md"));
+  if (readmeLines.length > 0) lines.push("", "README:", ...readmeLines);
 
   const configs = ["package.json", "tsconfig.json", "vite.config.js", "eslint.config.js", ".gitignore", "opencode.json", "opencode.jsonc"]
     .filter((name) => fs.existsSync(path.join(root, name)));
@@ -232,18 +232,45 @@ async function summaryMode(args) {
   return { content: [{ type: "text", text: formatted.text }], _meta: meta };
 }
 
-async function readFirstLinesIfExists(filePath, maxLines) {
+async function readReadmePreviewIfExists(filePath) {
   let file;
   try {
     file = await fs.promises.open(filePath, "r");
     const buffer = Buffer.alloc(Math.min(MAX_READ_BYTES, 16 * 1024));
     const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-    return decodeUtf8(buffer.subarray(0, bytesRead), { trimEnd: true }).split(/\r?\n/).slice(0, maxLines);
+    const rawLines = decodeUtf8(buffer.subarray(0, bytesRead), { trimEnd: true }).split(/\r?\n/);
+    const title = rawLines.find((line) => /^#\s+\S/.test(line.trim()));
+    const paragraph = firstReadmeParagraph(rawLines);
+    return [title, paragraph].filter(Boolean);
   } catch {
     return [];
   } finally {
     await file?.close().catch(() => {});
   }
+}
+
+function firstReadmeParagraph(lines) {
+  const paragraph = [];
+  let afterTitle = false;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!afterTitle) {
+      if (/^#\s+\S/.test(line)) afterTitle = true;
+      continue;
+    }
+    if (!line) {
+      if (paragraph.length > 0) break;
+      continue;
+    }
+    if (line.startsWith("#") || line.startsWith("|")) {
+      if (paragraph.length > 0) break;
+      continue;
+    }
+    paragraph.push(line);
+  }
+
+  return paragraph.join(" ");
 }
 
 async function readJsonIfExists(filePath) {
