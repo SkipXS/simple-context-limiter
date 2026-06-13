@@ -1,4 +1,4 @@
-import { COMMAND_SHELL_NAME, DEFAULT_COMMAND_TIMEOUT_MS, MAX_BYTES, MAX_COMMAND_TIMEOUT_MS, MIN_COMMAND_TIMEOUT_MS } from "../constants.js";
+import { COMMAND_SHELL_NAME, DEFAULT_COMMAND_TIMEOUT_MS, DEFAULT_BYTES, MAX_BYTES, MAX_COMMAND_TIMEOUT_MS, MIN_COMMAND_TIMEOUT_MS } from "../constants.js";
 import { formatOutput } from "../output.js";
 import { runCommandResult } from "../process.js";
 import { recordStats } from "../stats.js";
@@ -14,7 +14,7 @@ export async function logsResult(args, toolName) {
     maxBlocks = 10,
     contextLines = 5,
     maxLines = 120,
-    maxBytes = MAX_BYTES,
+    maxBytes = DEFAULT_BYTES,
     timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
   } = args ?? {};
 

@@ -146,7 +146,7 @@ async function runToolCallLimited(fn) {
   }
 }
 
-const instructions = "Prefer these bounded tools to keep context small: run for shell stdout, logs for tests/builds/lints/logs, read for file previews, search for local text/AST search, discover before broad repo reads, fetch for readable web pages, diff for git status/diff/history, and usage for savings/guidance. "
+const instructions = "Prefer these bounded tools to keep context small: sc-run for shell stdout, sc-logs for tests/builds/lints/logs, sc-read for file previews, sc-search for local text/AST search, sc-discover before broad repo reads, sc-fetch for readable web pages, sc-diff for git status/diff/history, and sc-usage for savings/guidance. "
   + "Use native client tools only when you need complete output, exact stderr/exit semantics, interactivity, raw HTML, or unsupported behavior. "
   + "After each call, check _meta.truncated; if true, use _meta.truncation.reason/retryHint and retry with a narrower query/path/range or higher maxLines/maxBytes before falling back.";
 

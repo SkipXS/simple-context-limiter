@@ -1,14 +1,14 @@
-import { MAX_BYTES, MAX_LINES, projectKey } from "../constants.js";
+import { DEFAULT_BYTES, MAX_BYTES, MAX_LINES, projectKey } from "../constants.js";
 import { formatOutput } from "../output.js";
 import { emptyCounter, formatStatsReport, getStats, normalizeCounter, withSavedPercent } from "../stats.js";
 import { usageReport } from "../usage.js";
 import { formatTruncationReason, invalidParams, responseMeta, savingsMeta, toolTextResult, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 export async function usageTool(args) {
-  const { mode = "stats", maxEvents = 1000, maxLines = MAX_LINES, maxBytes = MAX_BYTES } = args ?? {};
+  const { mode = "stats", maxEvents = 1000, maxLines = MAX_LINES, maxBytes = DEFAULT_BYTES } = args ?? {};
   if (mode !== "stats" && mode !== "report" && mode !== "guidance") invalidParams("usage mode must be \"stats\", \"report\", or \"guidance\"");
 
-  const lineLimit = validateInteger(maxLines, "usage maxLines", 10, 200);
+  const lineLimit = validateInteger(maxLines, "usage maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "usage maxBytes", 1024, MAX_BYTES);
   if (mode === "stats") return statsResult(lineLimit, byteLimit);
 
@@ -69,8 +69,8 @@ function formatGuidance(report) {
   }
 
   lines.push("", "Practical guidance:");
-  lines.push("Use diff mode=history instead of raw git log for compact commit history.");
-  lines.push("Use read path with fromLine/toLine for targeted ranges; use paths for additional non-ranged files.");
+  lines.push("Use sc-diff mode=history instead of raw git log for compact commit history.");
+  lines.push("Use sc-read path with fromLine/toLine for targeted ranges; use paths for additional non-ranged files.");
   lines.push("When _meta.truncated or _meta.response.truncated is true, retry with a narrower path/range/query before using raw shell output.");
 
   return lines.join("\n");

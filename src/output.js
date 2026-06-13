@@ -1,4 +1,4 @@
-import { MAX_BYTES, MAX_LINES } from "./constants.js";
+import { DEFAULT_BYTES, MAX_BYTES, MAX_LINES } from "./constants.js";
 
 export function normalizeMaxLines(maxLines = MAX_LINES) {
   const numeric = Number(maxLines);
@@ -6,8 +6,8 @@ export function normalizeMaxLines(maxLines = MAX_LINES) {
   return Math.max(10, Math.min(value, 500));
 }
 
-export function normalizeMaxBytes(maxBytes = MAX_BYTES) {
-  return normalizeLimit(maxBytes, MAX_BYTES, 1024, MAX_BYTES);
+export function normalizeMaxBytes(maxBytes = DEFAULT_BYTES) {
+  return normalizeLimit(maxBytes, DEFAULT_BYTES, 1024, MAX_BYTES);
 }
 
 export function normalizeLimit(value, fallback, min, max) {
@@ -16,7 +16,7 @@ export function normalizeLimit(value, fallback, min, max) {
   return Math.max(min, Math.min(parsed, max));
 }
 
-export function formatOutput(output, maxLines = MAX_LINES, maxBytes = MAX_BYTES) {
+export function formatOutput(output, maxLines = MAX_LINES, maxBytes = DEFAULT_BYTES) {
   const limit = normalizeMaxLines(maxLines);
   const byteLimit = normalizeMaxBytes(maxBytes);
   const totalBytes = Buffer.byteLength(output, "utf8");

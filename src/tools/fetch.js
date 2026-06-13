@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ALLOW_NON_HTTP_FETCH, CACHE_TTL_MS, MAX_BYTES, MAX_FETCH_BYTES, MAX_LINES, SERVER_VERSION } from "../constants.js";
+import { ALLOW_NON_HTTP_FETCH, CACHE_TTL_MS, DEFAULT_BYTES, MAX_BYTES, MAX_FETCH_BYTES, MAX_LINES, SERVER_VERSION } from "../constants.js";
 import { getCache, updateCache } from "../cache.js";
 import { decodeUtf8, formatOutput } from "../output.js";
 import { recordStats } from "../stats.js";
@@ -162,11 +162,11 @@ async function readLimitedText(res, maxBytes) {
 }
 
 export async function fetchTool(args) {
-  const { url, force = false, maxLines = MAX_LINES, maxBytes = MAX_BYTES } = args ?? {};
+  const { url, force = false, maxLines = MAX_LINES, maxBytes = DEFAULT_BYTES } = args ?? {};
   if (force !== undefined && typeof force !== "boolean") {
     invalidParams("fetch force must be a boolean when provided");
   }
-  const lineLimit = validateInteger(maxLines, "fetch maxLines", 10, 200);
+  const lineLimit = validateInteger(maxLines, "fetch maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "fetch maxBytes", 1024, MAX_BYTES);
 
   const data = await fetchUrl(url, force);

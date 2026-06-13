@@ -1,15 +1,15 @@
-import { DEFAULT_COMMAND_TIMEOUT_MS, MAX_BYTES, MAX_COMMAND_BYTES, MAX_COMMAND_TIMEOUT_MS, MAX_LINES, MIN_COMMAND_TIMEOUT_MS, COMMAND_SHELL_NAME } from "../constants.js";
+import { DEFAULT_COMMAND_TIMEOUT_MS, DEFAULT_BYTES, MAX_BYTES, MAX_COMMAND_BYTES, MAX_COMMAND_TIMEOUT_MS, MAX_LINES, MIN_COMMAND_TIMEOUT_MS, COMMAND_SHELL_NAME } from "../constants.js";
 import { formatOutput } from "../output.js";
 import { runCommand } from "../process.js";
 import { recordStats } from "../stats.js";
 import { formatTruncationReason, invalidParams, toolTextResult, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 export async function runTool(args) {
-  const { command, maxLines = MAX_LINES, maxBytes = MAX_BYTES, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS } = args ?? {};
+  const { command, maxLines = MAX_LINES, maxBytes = DEFAULT_BYTES, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS } = args ?? {};
   if (typeof command !== "string" || command.trim() === "") {
     invalidParams("run requires a non-empty command string");
   }
-  const lineLimit = validateInteger(maxLines, "run maxLines", 10, 200);
+  const lineLimit = validateInteger(maxLines, "run maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "run maxBytes", 1024, MAX_BYTES);
   const timeoutLimit = validateInteger(timeoutMs, "run timeoutMs", MIN_COMMAND_TIMEOUT_MS, MAX_COMMAND_TIMEOUT_MS);
 
@@ -29,7 +29,7 @@ export async function runTool(args) {
     savedPercent: totalBytes > 0 ? Math.round((savedBytes / totalBytes) * 100) : 0,
     estimatedTokensSaved: Math.ceil(savedBytes / 4),
     truncated,
-    ...truncationMeta(truncated, truncationReason, "Increase maxLines/maxBytes or use logs for stderr/error diagnostics."),
+    ...truncationMeta(truncated, truncationReason, "Increase maxLines/maxBytes or use sc-logs for stderr/error diagnostics."),
     empty: stdout === "",
     emptyReason: stdout === "" ? "no_output" : undefined,
     outputTooLarge,

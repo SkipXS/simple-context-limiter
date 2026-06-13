@@ -105,14 +105,14 @@ try {
     assert.equal(initialize.result.serverInfo.name, "simple-context-limiter");
     assert.equal(toolsList.result.tools.length, 8);
     assert.deepEqual(toolsList.result.tools.map((tool) => tool.name), [
-      "run",
-      "logs",
-      "read",
-      "search",
-      "discover",
-      "fetch",
-      "diff",
-      "usage",
+      "sc-run",
+      "sc-logs",
+      "sc-read",
+      "sc-search",
+      "sc-discover",
+      "sc-fetch",
+      "sc-diff",
+      "sc-usage",
     ]);
   } finally {
     child.kill();

@@ -122,18 +122,56 @@ function appendVisibleNotices(text, meta, maxBytes = Number.POSITIVE_INFINITY) {
   let current = text;
 
   if (meta?.stderrOmitted && Number.isFinite(meta.stderrBytes)) {
-    current = appendBoundedNotice(current, `[stderr omitted: ${meta.stderrBytes} bytes; use logs for diagnostics]`, meta, maxBytes);
+    current = appendBoundedNotice(current, `[stderr omitted: ${meta.stderrBytes} bytes; use sc-logs for diagnostics]`, meta, maxBytes);
   }
 
   if (meta?.truncated && meta.truncation?.reason) {
-    const reasonPrefix = `[truncated: ${meta.truncation.reason}`;
-    if (!current.includes(reasonPrefix)) {
-      const hint = meta.truncation.retryHint ? `; ${meta.truncation.retryHint}` : "";
-      current = appendBoundedNotice(current, `[truncated: ${meta.truncation.reason}${hint}]`, meta, maxBytes);
+    const friendlyReason = formatVisibleTruncationReason(meta.truncation.reason);
+    const notice = visibleTruncationNotice(meta.truncation.reason, meta.truncation.retryHint);
+    if (!current.includes(notice) && !current.includes(`[truncated: ${meta.truncation.reason}`) && !current.includes(`[truncated: ${friendlyReason}`)) {
+      current = appendBoundedNotice(current, notice, meta, maxBytes);
     }
   }
 
   return current;
+}
+
+function visibleTruncationNotice(reason, retryHint) {
+  const friendlyReason = formatVisibleTruncationReason(reason);
+  const hint = formatVisibleRetryHint(retryHint);
+  return hint ? `[truncated: ${friendlyReason}; ${hint}]` : `[truncated: ${friendlyReason}]`;
+}
+
+function formatVisibleTruncationReason(reason) {
+  return String(reason)
+    .replaceAll("_", " ")
+    .replace(/\bmax files\b/g, "file limit")
+    .replace(/\bmax entries\b/g, "entry limit")
+    .replace(/\bmax hunks\b/g, "hunk limit")
+    .replace(/\bmax symbols\b/g, "symbol limit")
+    .replace(/\bformat lines\b/g, "line limit")
+    .replace(/\bformat bytes\b/g, "byte limit")
+    .replace(/\bformat limit\b/g, "format limit")
+    .replace(/\bcommand output cap\b/g, "command output cap")
+    .replace(/\bdownload limit\b/g, "download limit")
+    .replace(/\bdepth limit\b/g, "depth limit")
+    .replace(/\brange limit\b/g, "range limit")
+    .replace(/\bscan limit\b/g, "scan limit")
+    .replace(/\bfile limit\b/g, "file limit")
+    .replace(/\bblock limit\b/g, "block limit")
+    .replace(/\bmatch limit\b/g, "match limit")
+    .replace(/\bresult limit\b/g, "result limit")
+    .replace(/\btail limit\b/g, "tail limit");
+}
+
+function formatVisibleRetryHint(retryHint) {
+  if (!retryHint) return "";
+  return String(retryHint)
+    .replace(/^Increase /, "retry with higher ")
+    .replace(/^Fetch /, "retry with ")
+    .replace(/^Narrow /, "retry with narrower ")
+    .replace(/\.$/, "")
+    .replace(/\bor\b/g, "or");
 }
 
 function appendBoundedNotice(text, notice, meta, maxBytes) {

@@ -9,12 +9,18 @@ import { searchTool } from "./search.js";
 import { usageTool } from "./usage.js";
 import { recordUsage } from "../usage.js";
 
+const TOOL_PREFIX = "sc-";
+
+function internalToolName(name) {
+  return typeof name === "string" && name.startsWith(TOOL_PREFIX) ? name.slice(TOOL_PREFIX.length) : undefined;
+}
+
 export const tools = {
   tools: [
     {
       name: "run",
       description:
-        "Run a local shell command and return stdout only. Stderr is omitted on success; use logs for stderr, exit diagnostics, or error blocks. Large stdout is bounded/truncated.",
+        "Run a local shell command and return stdout only. Stderr is omitted on success; use sc-logs for stderr, exit diagnostics, or error blocks. Large stdout is bounded/truncated.",
       inputSchema: {
         type: "object",
         properties: {
@@ -22,7 +28,7 @@ export const tools = {
           maxLines: {
             type: "integer",
             minimum: 10,
-            maximum: 200,
+            maximum: 500,
             description: "Max lines before truncation. Default: 60.",
           },
           maxBytes: {
@@ -86,7 +92,7 @@ export const tools = {
     {
       name: "read",
       description:
-        "Read one or more local UTF-8 text files and return bounded previews. Requires path or paths. Use path to identify the ranged file when requesting fromLine/toLine.",
+        "Read one or more local UTF-8 text files and return bounded previews. Requires path or paths. Ranged reads include a compact path:line header.",
       inputSchema: {
         type: "object",
         properties: {
@@ -170,7 +176,7 @@ export const tools = {
           maxLines: {
             type: "integer",
             minimum: 10,
-            maximum: 200,
+            maximum: 500,
             description: "Max output lines before head+tail truncation. Default: 60.",
           },
           maxBytes: {
@@ -186,7 +192,7 @@ export const tools = {
     {
       name: "discover",
       description:
-        "Discover repository structure and source outlines. Use mode=summary, files, tree, or outline before broad file reads.",
+        "Discover repository structure and source outlines. Use mode=summary, files, tree, or outline before broad sc-read calls.",
       inputSchema: {
         type: "object",
         properties: {
@@ -197,7 +203,7 @@ export const tools = {
           maxDepth: { type: "integer", minimum: 1, maximum: 10, description: "Maximum directory depth. Default: 3." },
           maxEntries: { type: "integer", minimum: 1, maximum: 2000, description: "Maximum entries to show. Default: 200." },
           maxSymbols: { type: "integer", minimum: 1, maximum: 1000, description: "Maximum outline entries to show. Default: 200." },
-          maxLines: { type: "integer", minimum: 10, maximum: 200, description: "Max output lines before truncation. Default: 60." },
+          maxLines: { type: "integer", minimum: 10, maximum: 500, description: "Max output lines before truncation. Default: 60." },
           maxBytes: { type: "integer", minimum: 1024, maximum: MAX_BYTES, description: "Max output bytes before truncation. Default: 32768." },
         },
       },
@@ -214,7 +220,7 @@ export const tools = {
           maxLines: {
             type: "integer",
             minimum: 10,
-            maximum: 200,
+            maximum: 500,
             description: "Max lines before truncation. Default: 60.",
           },
           maxBytes: {
@@ -259,7 +265,7 @@ export const tools = {
           maxLines: {
             type: "integer",
             minimum: 10,
-            maximum: 200,
+            maximum: 500,
             description: "Max output lines before head+tail truncation. Default: 60.",
           },
           maxBytes: {
@@ -280,7 +286,7 @@ export const tools = {
         properties: {
           mode: { type: "string", enum: ["stats", "report", "guidance"], description: "Report type. Default: stats." },
           maxEvents: { type: "integer", minimum: 1, maximum: 10000, description: "Maximum recent usage events to analyze. Default: 1000." },
-          maxLines: { type: "integer", minimum: 10, maximum: 200, description: "Max lines before truncation. Default: 60." },
+          maxLines: { type: "integer", minimum: 10, maximum: 500, description: "Max lines before truncation. Default: 60." },
           maxBytes: { type: "integer", minimum: 1024, maximum: MAX_BYTES, description: "Max output bytes before truncation. Default: 32768." },
         },
       },
@@ -299,7 +305,10 @@ const handlers = {
   usage: usageTool,
 };
 
-for (const tool of tools.tools) tool.inputSchema.additionalProperties = false;
+for (const tool of tools.tools) {
+  tool.name = `${TOOL_PREFIX}${tool.name}`;
+  tool.inputSchema.additionalProperties = false;
+}
 
 const inputSchemas = new Map(tools.tools.map((tool) => [tool.name, tool.inputSchema]));
 
@@ -316,11 +325,12 @@ function validateKnownArgs(name, args) {
 
 export async function callTool(name, args) {
   const started = Date.now();
+  const internalName = internalToolName(name);
   let result;
   let error;
 
   try {
-    const handler = handlers[name];
+    const handler = internalName ? handlers[internalName] : undefined;
     if (handler) {
       validateKnownArgs(name, args);
       result = await handler(args);
@@ -334,6 +344,6 @@ export async function callTool(name, args) {
     error = caught;
     throw caught;
   } finally {
-    await recordUsage(name, args, result, error, Date.now() - started);
+    await recordUsage(handlers[internalName] ? internalName : name, args, result, error, Date.now() - started);
   }
 }

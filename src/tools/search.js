@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { MAX_BYTES, MAX_LINES, MAX_READ_BYTES, RG_NAME } from "../constants.js";
+import { DEFAULT_BYTES, MAX_BYTES, MAX_LINES, MAX_READ_BYTES, RG_NAME } from "../constants.js";
 import { formatOutput } from "../output.js";
 import { commandError, runProcessLines } from "../process.js";
 import { recordStats } from "../stats.js";
@@ -132,7 +132,7 @@ export async function searchTool(args) {
     contextLines = 0,
     maxMatches = 100,
     maxLines = MAX_LINES,
-    maxBytes = MAX_BYTES,
+    maxBytes = DEFAULT_BYTES,
   } = args ?? {};
 
   if (engine !== "text" && engine !== "ast") {
@@ -152,7 +152,7 @@ export async function searchTool(args) {
   }
   const contextLimit = validateInteger(contextLines, "search contextLines", 0, 10);
   const limit = validateInteger(maxMatches, "search maxMatches", 1, 1000);
-  const lineLimit = validateInteger(maxLines, "search maxLines", 10, 200);
+  const lineLimit = validateInteger(maxLines, "search maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "search maxBytes", 1024, MAX_BYTES);
 
   const commandSearchPath = relativePath(searchPath);
@@ -255,7 +255,7 @@ function normalizeRgMatchLine(line) {
 }
 
 function truncatedMatchesLine(shownMatches) {
-  return `[truncated: match_limit; ${shownMatches} matches shown; more exist; narrow path/include or raise maxMatches]`;
+  return `[truncated: match limit; ${shownMatches} matches shown; more exist; narrow path/include or raise maxMatches]`;
 }
 
 function searchTruncationReason({ matchLimited, result, formatted, maxLines, maxBytes }) {
@@ -373,7 +373,7 @@ function formatAstMatch(match) {
   const endLine = Number.isInteger(end?.line) ? end.line + 1 : line;
   const column = Number.isInteger(start?.column) ? start.column + 1 : 0;
   const matchText = compactAstText(match.text);
-  const spanHint = endLine > line ? ` [lines ${line}-${endLine}; use read fromLine=${line} toLine=${endLine}]` : "";
+  const spanHint = endLine > line ? ` [lines ${line}-${endLine}; use sc-read fromLine=${line} toLine=${endLine}]` : "";
   const header = `${file}:${line}:${column}: ${matchText}${spanHint}`;
   const context = formatAstContext(match, line);
   return context.length > 0 ? [header, ...context] : [header];

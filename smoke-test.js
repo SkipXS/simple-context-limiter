@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
-import { COMMAND_SHELL_NAME, MAX_BYTES, SERVER_VERSION } from "./src/constants.js";
+import { COMMAND_SHELL_NAME, DEFAULT_BYTES, MAX_BYTES, SERVER_VERSION } from "./src/constants.js";
 import { formatOutput } from "./src/output.js";
 import { errorData, runProcess, runProcessLines } from "./src/process.js";
 import { callTool } from "./src/tools.js";
@@ -198,9 +198,9 @@ async function hasGitForTest() {
 }
 
 try {
-  const longLine = formatOutput("x".repeat(MAX_BYTES + 8192), 60);
+  const longLine = formatOutput("x".repeat(DEFAULT_BYTES + 8192), 60);
   assert.equal(longLine.truncated, true);
-  assert.ok(Buffer.byteLength(longLine.text, "utf8") <= MAX_BYTES);
+  assert.ok(Buffer.byteLength(longLine.text, "utf8") <= DEFAULT_BYTES);
   assert.doesNotMatch(longLine.text, /-\d+ lines omitted/);
   const emptyOutput = formatOutput("");
   assert.equal(emptyOutput.text, "(no output)");
@@ -210,7 +210,7 @@ try {
   const customByteLimit = formatOutput("x".repeat(8192), 60, 1024);
   assert.equal(customByteLimit.truncated, true);
   assert.ok(Buffer.byteLength(customByteLimit.text, "utf8") <= 1024);
-  const unicodeLongLine = formatOutput("🙂".repeat(MAX_BYTES), 60);
+  const unicodeLongLine = formatOutput("🙂".repeat(DEFAULT_BYTES), 60);
   assert.equal(unicodeLongLine.truncated, true);
   assert.doesNotMatch(unicodeLongLine.text, /�/);
 
@@ -271,7 +271,7 @@ try {
     jsonrpc: "2.0",
     id: "pre-call",
     method: "tools/call",
-    params: { name: "usage", arguments: {} },
+    params: { name: "sc-usage", arguments: {} },
   });
   assert.equal(preInitCall.error.code, -32002);
   assert.match(preInitCall.error.message, /requires initialize/);
@@ -303,7 +303,7 @@ try {
   const sideEffectCommand = isPowerShellConfigured()
     ? `& ${shellQuote(process.execPath)} -e "require('node:fs').writeFileSync(require('node:path').join(require('node:os').tmpdir(),'${sideEffectName}'),'ran')"`
     : `${shellQuote(process.execPath)} -e "require('node:fs').writeFileSync(require('node:path').join(require('node:os').tmpdir(),'${sideEffectName}'),'ran')"`;
-  notification("tools/call", { name: "run", arguments: { command: sideEffectCommand } });
+  notification("tools/call", { name: "sc-run", arguments: { command: sideEffectCommand } });
   await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(await pathExists(sideEffectFile), false);
   assert.deepEqual(unexpectedResponses, []);
@@ -363,26 +363,30 @@ try {
 
   const listed = await request("tools/list", {});
   assert.deepEqual(listed.result.tools.map((tool) => tool.name), [
-    "run",
-    "logs",
-    "read",
-    "search",
-    "discover",
-    "fetch",
-    "diff",
-    "usage",
+    "sc-run",
+    "sc-logs",
+    "sc-read",
+    "sc-search",
+    "sc-discover",
+    "sc-fetch",
+    "sc-diff",
+    "sc-usage",
   ]);
   assert.equal(listed.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
   assert.equal(findSchemaKeyword(listed.result.tools.map((tool) => tool.inputSchema), ["oneOf", "anyOf", "allOf", "const", "not"]), undefined);
-  const searchSchema = listed.result.tools.find((tool) => tool.name === "search").inputSchema;
+  const runSchema = listed.result.tools.find((tool) => tool.name === "sc-run").inputSchema;
+  assert.equal(runSchema.properties.maxLines.maximum, 500);
+  const searchSchema = listed.result.tools.find((tool) => tool.name === "sc-search").inputSchema;
   assert.deepEqual(searchSchema.properties.engine.enum, ["text", "ast"]);
-  const discoverSchema = listed.result.tools.find((tool) => tool.name === "discover").inputSchema;
+  assert.equal(searchSchema.properties.maxLines.maximum, 500);
+  const discoverSchema = listed.result.tools.find((tool) => tool.name === "sc-discover").inputSchema;
   assert.deepEqual(discoverSchema.properties.mode.enum, ["summary", "files", "tree", "outline"]);
-  const diffSchema = listed.result.tools.find((tool) => tool.name === "diff").inputSchema;
+  const diffSchema = listed.result.tools.find((tool) => tool.name === "sc-diff").inputSchema;
   assert.deepEqual(diffSchema.properties.mode.enum, ["diff", "status", "history"]);
-  const usageSchema = listed.result.tools.find((tool) => tool.name === "usage").inputSchema;
+  assert.equal(diffSchema.properties.maxLines.maximum, 500);
+  const usageSchema = listed.result.tools.find((tool) => tool.name === "sc-usage").inputSchema;
   assert.deepEqual(usageSchema.properties.mode.enum, ["stats", "report", "guidance"]);
-  const readSchema = listed.result.tools.find((tool) => tool.name === "read").inputSchema;
+  const readSchema = listed.result.tools.find((tool) => tool.name === "sc-read").inputSchema;
   assert.equal(readSchema.type, "object");
   assert.equal(readSchema.anyOf, undefined);
   assert.match(readSchema.properties.paths.description, /path is also provided/);
@@ -390,7 +394,7 @@ try {
   const slowCommand = nodeEvalCommand("setTimeout(() => {}, 500)");
   const limitedStart = Date.now();
   const limitedResponses = await Promise.all(Array.from({ length: 4 }, () => request("tools/call", {
-    name: "run",
+    name: "sc-run",
     arguments: { command: slowCommand, timeoutMs: 5_000, maxLines: 10 },
   })));
   const limitedElapsed = Date.now() - limitedStart;
@@ -404,16 +408,23 @@ try {
   assert.equal(unknownTool.error.code, -32601);
   assert.match(unknownTool.error.message, /Unknown tool/);
 
+  const legacyToolName = await request("tools/call", {
+    name: "run",
+    arguments: { command: "noop" },
+  });
+  assert.equal(legacyToolName.error.code, -32601);
+  assert.match(legacyToolName.error.message, /Unknown tool/);
+
   const missingToolName = await request("tools/call", { arguments: {} });
   assert.equal(missingToolName.error.code, -32602);
   assert.match(missingToolName.error.message, /params\.name/);
 
-  const invalidToolArguments = await request("tools/call", { name: "usage", arguments: [] });
+  const invalidToolArguments = await request("tools/call", { name: "sc-usage", arguments: [] });
   assert.equal(invalidToolArguments.error.code, -32602);
   assert.match(invalidToolArguments.error.message, /params\.arguments/);
 
   const files = await request("tools/call", {
-    name: "discover",
+    name: "sc-discover",
     arguments: { mode: "files", include: "^(server|package)\\.json$|^server\\.js$", maxFiles: 20 },
   });
   assert.ok(files.result, JSON.stringify(files));
@@ -422,11 +433,15 @@ try {
 
   const fallbackFilesDir = join(tempDir, "fallback-files");
   await mkdir(join(fallbackFilesDir, "sub"), { recursive: true });
+  await mkdir(join(fallbackFilesDir, ".pi", "agent-runs"), { recursive: true });
+  await mkdir(join(fallbackFilesDir, ".opencode", "agent-runs"), { recursive: true });
+  await writeFile(join(fallbackFilesDir, ".pi", "agent-runs", "noisy.txt"), "noise\n", "utf8");
+  await writeFile(join(fallbackFilesDir, ".opencode", "agent-runs", "noisy.txt"), "noise\n", "utf8");
   await writeFile(join(fallbackFilesDir, "sub", "a.txt"), "a\n", "utf8");
   for (let i = 0; i < 10; i++) await writeFile(join(fallbackFilesDir, "sub", `extra-${i}.txt`), `${i}\n`, "utf8");
   const fallbackFilesRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
     const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
-    const result = await callTool('discover', { mode: 'files', path: 'sub', maxFiles: 3 });
+    const result = await callTool('sc-discover', { mode: 'files', path: 'sub', maxFiles: 3 });
     console.log(JSON.stringify({ text: result.content[0].text, meta: result._meta }));
   `], {
     cwd: fallbackFilesDir,
@@ -444,7 +459,7 @@ try {
 
   const fallbackFileRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
     const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
-    const result = await callTool('discover', { mode: 'files', path: 'sub/a.txt', maxFiles: 20 });
+    const result = await callTool('sc-discover', { mode: 'files', path: 'sub/a.txt', maxFiles: 20 });
     console.log(JSON.stringify(result.content[0].text));
   `], {
     cwd: fallbackFilesDir,
@@ -455,23 +470,25 @@ try {
   assert.equal(JSON.parse(fallbackFileRun.stdout.trim()), "sub/a.txt");
 
   const tree = await request("tools/call", {
-    name: "discover",
+    name: "sc-discover",
     arguments: { mode: "tree", path: tempDir, maxDepth: 2, maxEntries: 20 },
   });
   assert.ok(tree.result, JSON.stringify(tree));
   assert.match(tree.result.content[0].text, /large\.txt/);
 
   const depthLimitedTree = await request("tools/call", {
-    name: "discover",
+    name: "sc-discover",
     arguments: { mode: "tree", path: fallbackFilesDir, maxDepth: 1, maxEntries: 20 },
   });
   assert.equal(depthLimitedTree.result._meta.depthLimited, true);
   assert.equal(depthLimitedTree.result._meta.truncated, true);
   assert.equal(depthLimitedTree.result._meta.truncation.reason, "depth_limit");
   assert.match(depthLimitedTree.result.content[0].text, /\[omitted: more children beyond maxDepth\]/);
+  assert.doesNotMatch(depthLimitedTree.result.content[0].text, /\.pi/);
+  assert.doesNotMatch(depthLimitedTree.result.content[0].text, /\.opencode/);
 
   const entryLimitedTree = await request("tools/call", {
-    name: "discover",
+    name: "sc-discover",
     arguments: { mode: "tree", path: join(fallbackFilesDir, "sub"), maxDepth: 1, maxEntries: 3 },
   });
   assert.equal(entryLimitedTree.result._meta.entriesShown, 3);
@@ -482,21 +499,21 @@ try {
   assert.equal(entryLimitedTree.result._meta.truncation.reason, "max_entries");
 
   const repoSummary = await request("tools/call", {
-    name: "discover",
+    name: "sc-discover",
     arguments: { mode: "summary", maxLines: 40 },
   });
   assert.ok(repoSummary.result, JSON.stringify(repoSummary));
   assert.match(repoSummary.result.content[0].text, /simple-context-limiter/);
 
   const outline = await request("tools/call", {
-    name: "discover",
+    name: "sc-discover",
     arguments: { mode: "outline", path: join(import.meta.dirname, "check-syntax.js"), maxSymbols: 20 },
   });
   assert.ok(outline.result, JSON.stringify(outline));
   assert.match(outline.result.content[0].text, /jsFiles/);
 
   const outlineFixture = await request("tools/call", {
-    name: "discover",
+    name: "sc-discover",
     arguments: { mode: "outline", path: outlineFixtureFile, maxSymbols: 20 },
   });
   assert.ok(outlineFixture.result, JSON.stringify(outlineFixture));
@@ -510,14 +527,14 @@ try {
   assert.doesNotMatch(outlineFixture.result.content[0].text, /localLegacy/);
 
   const symbolLimitedOutline = await request("tools/call", {
-    name: "discover",
+    name: "sc-discover",
     arguments: { mode: "outline", path: outlineFixtureFile, maxSymbols: 1 },
   });
   assert.equal(symbolLimitedOutline.result._meta.truncated, true);
   assert.equal(symbolLimitedOutline.result._meta.truncation.reason, "max_symbols");
 
   const testSummary = await request("tools/call", {
-    name: "logs",
+    name: "sc-logs",
     arguments: {
       command: isPowerShellConfigured()
         ? `& ${shellQuote(process.execPath)} -e "console.error('ReferenceError: missing'); process.exit(2)"`
@@ -530,26 +547,32 @@ try {
   assert.match(testSummary.result.content[0].text, /ReferenceError: missing/);
 
   const invalidDiffMaxFiles = await request("tools/call", {
-    name: "diff",
+    name: "sc-diff",
     arguments: { maxFiles: 0 },
   });
   assert.equal(invalidDiffMaxFiles.error.code, -32602);
   assert.match(invalidDiffMaxFiles.error.message, /maxFiles must be between 1 and 100/);
 
   const unknownRunArg = await request("tools/call", {
-    name: "run",
+    name: "sc-run",
     arguments: { command: "noop", unexpected: true },
   });
   assert.equal(unknownRunArg.error.code, -32602);
   assert.match(unknownRunArg.error.message, /Unknown argument/);
 
   const ok = await request("tools/call", {
-    name: "run",
+    name: "sc-run",
     arguments: { command: isPowerShellConfigured() ? "Write-Output ok" : `${shellQuote(process.execPath)} -e "console.log('ok')"` },
   });
   assert.ok(ok.result.content[0].text.startsWith("ok"));
   assert.equal(ok.result._meta.truncated, false);
   assertSavingsMeta(ok.result._meta);
+
+  const prefixedOk = await request("tools/call", {
+    name: "sc-run",
+    arguments: { command: isPowerShellConfigured() ? "Write-Output prefixed-ok" : `${shellQuote(process.execPath)} -e "console.log('prefixed-ok')"` },
+  });
+  assert.ok(prefixedOk.result.content[0].text.startsWith("prefixed-ok"));
   assert.equal(Object.hasOwn(ok.result._meta, "returnedBytes"), false);
   assert.equal(Object.hasOwn(ok.result._meta, "totalBytes"), false);
   assert.equal(typeof ok.result._meta.durationMs, "number");
@@ -557,7 +580,7 @@ try {
   assert.equal(typeof ok.result._meta.shell, "string");
 
   const stdoutWithStderr = await request("tools/call", {
-    name: "run",
+    name: "sc-run",
     arguments: {
       command: isPowerShellConfigured()
         ? `& ${shellQuote(process.execPath)} -e "console.log('stdout-ok'); console.error('stderr-noise')"`
@@ -565,14 +588,14 @@ try {
     },
   });
   assert.match(stdoutWithStderr.result.content[0].text, /stdout-ok/);
-  assert.match(stdoutWithStderr.result.content[0].text, /\[stderr omitted: \d+ bytes; use logs for diagnostics\]/);
+  assert.match(stdoutWithStderr.result.content[0].text, /\[stderr omitted: \d+ bytes; use sc-logs for diagnostics\]/);
   assert.doesNotMatch(stdoutWithStderr.result.content[0].text, /stderr-noise/);
   assert.equal(stdoutWithStderr.result._meta.stderrOmitted, true);
   assert.ok(stdoutWithStderr.result._meta.stderrBytes > 0);
   assert.doesNotMatch(JSON.stringify(stdoutWithStderr.result._meta), /stderr-noise/);
 
   const byteLimitedRun = await request("tools/call", {
-    name: "run",
+    name: "sc-run",
     arguments: {
       command: isPowerShellConfigured()
         ? `& ${shellQuote(process.execPath)} -e "console.log('x'.repeat(50000))"`
@@ -584,7 +607,7 @@ try {
   assert.equal(byteLimitedRun.result._meta.truncated, true);
   assert.deepEqual(byteLimitedRun.result._meta.truncation, {
     reason: "format_bytes",
-    retryHint: "Increase maxLines/maxBytes or use logs for stderr/error diagnostics.",
+    retryHint: "Increase maxLines/maxBytes or use sc-logs for stderr/error diagnostics.",
   });
   assert.ok(byteLimitedRun.result._meta.response.returnedBytes <= 1024);
   assert.ok(byteLimitedRun.result._meta.response.savedBytes > 0);
@@ -594,7 +617,7 @@ try {
     : `${shellQuote(process.execPath)} -e "process.stdout.write('x'.repeat(50000))"`;
   const outputTooLargeRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
     const { callTool } = await import('./src/tools.js');
-    const result = await callTool('run', { command: ${JSON.stringify(outputTooLargeCommand)}, maxLines: 200, maxBytes: 32768 });
+    const result = await callTool('sc-run', { command: ${JSON.stringify(outputTooLargeCommand)}, maxLines: 200, maxBytes: 32768 });
     console.log(JSON.stringify(result._meta));
   `], {
     cwd: import.meta.dirname,
@@ -615,28 +638,28 @@ try {
   assert.ok(outputTooLargeMeta.response.savedBytes > 0);
 
   const invalidRunMaxLines = await request("tools/call", {
-    name: "run",
+    name: "sc-run",
     arguments: { command: "noop", maxLines: "20" },
   });
   assert.equal(invalidRunMaxLines.error.code, -32602);
   assert.match(invalidRunMaxLines.error.message, /maxLines must be an integer/);
 
   const invalidRunMaxBytes = await request("tools/call", {
-    name: "run",
+    name: "sc-run",
     arguments: { command: "noop", maxBytes: "1024" },
   });
   assert.equal(invalidRunMaxBytes.error.code, -32602);
   assert.match(invalidRunMaxBytes.error.message, /maxBytes must be an integer/);
 
   const invalidRunTimeout = await request("tools/call", {
-    name: "run",
+    name: "sc-run",
     arguments: { command: "noop", timeoutMs: 99 },
   });
   assert.equal(invalidRunTimeout.error.code, -32602);
   assert.match(invalidRunTimeout.error.message, /timeoutMs must be between 100 and 1800000/);
 
   const timedOutRun = await request("tools/call", {
-    name: "run",
+    name: "sc-run",
     arguments: {
       command: isPowerShellConfigured()
         ? `& ${shellQuote(process.execPath)} -e "setTimeout(() => {}, 1000)"`
@@ -651,7 +674,7 @@ try {
     ? `& ${shellQuote(process.execPath)} -e "for (let i = 0; i < 40; i++) console.log('line ' + i); console.error('AssertionError: expected true'); console.error('    at test.js:10:5'); process.exit(7)"`
     : `${shellQuote(process.execPath)} -e "for (let i = 0; i < 40; i++) console.log('line ' + i); console.error('AssertionError: expected true'); console.error('    at test.js:10:5'); process.exit(7)"`;
   const logs = await request("tools/call", {
-    name: "logs",
+    name: "sc-logs",
     arguments: { command: logsCommand, maxBlocks: 2, contextLines: 1, maxBytes: 4096 },
   });
   assert.ok(logs.result, JSON.stringify(logs));
@@ -670,7 +693,7 @@ try {
   assertSavingsMeta(logs.result._meta);
 
   const npmErrLogs = await request("tools/call", {
-    name: "logs",
+    name: "sc-logs",
     arguments: {
       command: isPowerShellConfigured()
         ? `& ${shellQuote(process.execPath)} -e "for (let i = 0; i < 20; i++) console.log('before ' + i); console.error('npm ERR! code E404'); for (let i = 0; i < 40; i++) console.log('after ' + i)"`
@@ -684,7 +707,7 @@ try {
   assert.match(npmErrLogs.result.content[0].text, /npm ERR! code E404/);
 
   const warningBeforeErrorLogs = await request("tools/call", {
-    name: "logs",
+    name: "sc-logs",
     arguments: {
       command: nodeEvalCommand("for (let i = 0; i < 25; i++) console.error('warning: noisy ' + i); console.error('Error: final boom'); process.exit(1)"),
       maxBlocks: 1,
@@ -699,7 +722,7 @@ try {
   assert.doesNotMatch(warningBeforeErrorLogs.result.content[0].text, /warning: noisy/);
 
   const standaloneStackBeforeErrorLogs = await request("tools/call", {
-    name: "logs",
+    name: "sc-logs",
     arguments: {
       command: nodeEvalCommand("console.error('warning: noisy'); console.error('    at warn (file.js:1:1)'); console.error('info filler'); console.error('Error: final boom'); process.exit(1)"),
       maxBlocks: 1,
@@ -716,7 +739,7 @@ try {
     ? `& ${shellQuote(process.execPath)} -e "for (let i = 0; i < 30; i++) console.log('plain ' + i)"`
     : `${shellQuote(process.execPath)} -e "for (let i = 0; i < 30; i++) console.log('plain ' + i)"`;
   const logsFallback = await request("tools/call", {
-    name: "logs",
+    name: "sc-logs",
     arguments: { command: logsFallbackCommand, maxLines: 10, maxBytes: 4096 },
   });
   assert.ok(logsFallback.result, JSON.stringify(logsFallback));
@@ -727,7 +750,7 @@ try {
   assert.doesNotMatch(logsFallback.result.content[0].text, /plain 0/);
 
   const jsErrorLogs = await request("tools/call", {
-    name: "logs",
+    name: "sc-logs",
     arguments: {
       command: isPowerShellConfigured()
         ? `& ${shellQuote(process.execPath)} -e "console.log('before'); console.error('TypeError: bad input'); console.log('after'); process.exit(1)"`
@@ -741,14 +764,14 @@ try {
   assert.match(jsErrorLogs.result.content[0].text, /TypeError: bad input/);
 
   const invalidLogsMaxBlocks = await request("tools/call", {
-    name: "logs",
+    name: "sc-logs",
     arguments: { command: "noop", maxBlocks: 0 },
   });
   assert.equal(invalidLogsMaxBlocks.error.code, -32602);
   assert.match(invalidLogsMaxBlocks.error.message, /maxBlocks must be between 1 and 50/);
 
   const timedOutLogs = await request("tools/call", {
-    name: "logs",
+    name: "sc-logs",
     arguments: {
       command: isPowerShellConfigured()
         ? `& ${shellQuote(process.execPath)} -e "setTimeout(() => {}, 1000)"`
@@ -764,7 +787,7 @@ try {
 
   if (configuredShell().includes("bash")) {
     const bashOnly = await request("tools/call", {
-      name: "run",
+      name: "sc-run",
       arguments: { command: "printf 'configured-bash-ok\\n'" },
     });
     assert.ok(bashOnly.result.content[0].text.startsWith("configured-bash-ok"));
@@ -772,7 +795,7 @@ try {
 
   if (configuredShell().includes("cmd")) {
     const cmdOnly = await request("tools/call", {
-      name: "run",
+      name: "sc-run",
       arguments: { command: "echo configured-cmd-ok" },
     });
     assert.ok(cmdOnly.result.content[0].text.startsWith("configured-cmd-ok"));
@@ -780,14 +803,14 @@ try {
 
   if (isPowerShellConfigured()) {
     const powershellOnly = await request("tools/call", {
-      name: "run",
+      name: "sc-run",
       arguments: { command: "Write-Output configured-powershell-ok" },
     });
     assert.ok(powershellOnly.result.content[0].text.startsWith("configured-powershell-ok"));
   }
 
   const failed = await request("tools/call", {
-    name: "run",
+    name: "sc-run",
     arguments: { command: isPowerShellConfigured() ? `& ${shellQuote(process.execPath)} -e "console.error('runtime boom'); process.exit(7)"` : `${shellQuote(process.execPath)} -e "console.error('runtime boom'); process.exit(7)"` },
   });
   assert.equal(failed.result.isError, true);
@@ -799,7 +822,7 @@ try {
   assert.match(failed.result.content[0].text, /stderr:\nruntime boom/);
 
   const slow = request("tools/call", {
-    name: "run",
+    name: "sc-run",
     arguments: { command: isPowerShellConfigured() ? "Start-Sleep -Milliseconds 300; Write-Output slow" : `${shellQuote(process.execPath)} -e "setTimeout(() => console.log('slow'), 300)"` },
   });
   const listWhileRunning = await request("tools/list", {});
@@ -808,7 +831,7 @@ try {
   assert.ok(slowResult.result.content[0].text.startsWith("slow"));
 
   const noOutputRun = await request("tools/call", {
-    name: "run",
+    name: "sc-run",
     arguments: { command: nodeEvalCommand(""), maxLines: 20 },
   });
   assert.equal(noOutputRun.result.content[0].text, "(no output)");
@@ -816,7 +839,7 @@ try {
   assert.equal(noOutputRun.result._meta.emptyReason, "no_output");
 
   const read = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: largeFile, maxLines: 20 },
   });
   assert.equal(read.result._meta.truncated, true);
@@ -830,21 +853,21 @@ try {
   assert.match(read.result.content[0].text, /file line 299/);
 
   const invalidNumberedPreview = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: largeFile, lineNumbers: true, maxLines: 20 },
   });
   assert.equal(invalidNumberedPreview.error.code, -32602);
   assert.match(invalidNumberedPreview.error.message, /lineNumbers requires/);
 
   const missingReadPath = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: {},
   });
   assert.equal(missingReadPath.error.code, -32602);
   assert.match(missingReadPath.error.message, /requires path or paths/);
 
   const readMany = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { paths: [largeFile, dashFile], maxLinesPerFile: 20, maxTotalBytes: 4096 },
   });
   assert.equal(readMany.result._meta.filesRequested, 2);
@@ -861,7 +884,7 @@ try {
   assert.match(readMany.result.content[0].text, /-needle/);
 
   const boundaryTruncatedReadMany = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { paths: [largeFile, dashFile], maxLinesPerFile: 20, maxTotalLines: 10, maxTotalBytes: 4096 },
   });
   const boundaryText = boundaryTruncatedReadMany.result.content[0].text;
@@ -870,21 +893,21 @@ try {
   assert.match(boundaryText, /--- .*dash\.txt ---[\s\S]*-needle/);
 
   const readManyMaxFallback = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { paths: [largeFile, dashFile], maxLines: 20, maxBytes: 4096, maxTotalLines: 20, maxTotalBytes: 4096 },
   });
   assert.equal(readManyMaxFallback.result._meta.maxTotalLines, 20);
   assert.equal(readManyMaxFallback.result._meta.files.length, 2);
 
   const invalidReadManyRange = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { paths: [largeFile, dashFile], fromLine: 1 },
   });
   assert.equal(invalidReadManyRange.error.code, -32602);
   assert.match(invalidReadManyRange.error.message, /require path/);
 
   const singlePathArrayRange = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { paths: [largeFile], fromLine: 291, toLine: 295, maxLinesPerFile: 20 },
   });
   assert.ok(singlePathArrayRange.result, JSON.stringify(singlePathArrayRange));
@@ -892,7 +915,7 @@ try {
   assert.doesNotMatch(singlePathArrayRange.result.content[0].text, /file line 289/);
 
   const mergedReadPathAndPaths = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: largeFile, paths: [dashFile, largeFile], maxLinesPerFile: 20, maxTotalBytes: 4096 },
   });
   assert.equal(mergedReadPathAndPaths.result._meta.filesRequested, 2);
@@ -901,7 +924,7 @@ try {
   assert.match(mergedReadPathAndPaths.result.content[0].text, /dash\.txt/);
 
   const rangedMergedRead = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: largeFile, paths: [dashFile], fromLine: 291, toLine: 295, maxLinesPerFile: 20, maxTotalBytes: 4096 },
   });
   assert.ok(rangedMergedRead.result, JSON.stringify(rangedMergedRead));
@@ -912,14 +935,14 @@ try {
   assert.match(rangedMergedRead.result.content[0].text, /-needle/);
 
   const invalidReadManyPaths = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { paths: Array.from({ length: 21 }, (_, i) => `${i}.txt`) },
   });
   assert.equal(invalidReadManyPaths.error.code, -32602);
   assert.match(invalidReadManyPaths.error.message, /at most 20/);
 
   const limitedRead = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: largeOneLineFile, maxLines: 20 },
   });
   assert.equal(limitedRead.result._meta.fileReadLimited, true);
@@ -928,7 +951,7 @@ try {
   assert.doesNotMatch(limitedRead.result.content[0].text, /�/);
 
   const byteLimitedRead = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: largeOneLineFile, maxLines: 20, maxBytes: 1024 },
   });
   assert.equal(byteLimitedRead.result._meta.truncated, true);
@@ -936,7 +959,7 @@ try {
   assert.ok(byteLimitedRead.result._meta.response.returnedBytes <= 1024);
 
   const rangeRead = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: largeFile, fromLine: 291, toLine: 295, maxLines: 20 },
   });
   assert.equal(rangeRead.result._meta.truncated, false);
@@ -946,20 +969,22 @@ try {
   assert.equal(rangeRead.result._meta.returnedLines, 5);
   assert.equal(typeof rangeRead.result._meta.scannedBytes, "number");
   assert.equal(rangeRead.result._meta.scanTimedOut, false);
+  assert.match(rangeRead.result.content[0].text, /^--- .*large\.txt:291-295 ---/);
   assert.match(rangeRead.result.content[0].text, /file line 290/);
   assert.match(rangeRead.result.content[0].text, /file line 294/);
   assert.doesNotMatch(rangeRead.result.content[0].text, /file line 289/);
 
   const numberedRangeRead = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: largeFile, fromLine: 291, toLine: 292, lineNumbers: true, maxLines: 20 },
   });
   assert.equal(numberedRangeRead.result._meta.lineNumbers, true);
+  assert.match(numberedRangeRead.result.content[0].text, /^--- .*large\.txt:291-292 ---/);
   assert.match(numberedRangeRead.result.content[0].text, /^291: file line 290/m);
   assert.match(numberedRangeRead.result.content[0].text, /^292: file line 291/m);
 
   const limitedRangeRead = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: largeFile, fromLine: 1, toLine: 50, maxLines: 10 },
   });
   assert.equal(limitedRangeRead.result._meta.truncated, true);
@@ -968,17 +993,18 @@ try {
   assert.equal(limitedRangeRead.result._meta.returnedLines, 10);
 
   const byteLimitedRangeRead = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: hugeRangeFile, fromLine: 1, toLine: 1, maxLines: 20 },
   });
   assert.equal(byteLimitedRangeRead.result._meta.truncated, true);
   assert.equal(byteLimitedRangeRead.result._meta.fileReadLimited, true);
   assert.equal(byteLimitedRangeRead.result._meta.returnedLines, 1);
   assert.ok(byteLimitedRangeRead.result._meta.response.savedBytes > 0);
-  assert.match(byteLimitedRangeRead.result.content[0].text, /^x+/);
+  assert.match(byteLimitedRangeRead.result.content[0].text, /^--- .*huge-range\.txt:1-1 ---/);
+  assert.match(byteLimitedRangeRead.result.content[0].text, /\nx+/);
 
   const scanLimitedRangeRead = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: scanLimitedRangeFile, fromLine: 2, toLine: 2, maxLines: 20 },
   });
   assert.equal(scanLimitedRangeRead.result._meta.truncated, true);
@@ -987,7 +1013,7 @@ try {
   assert.equal(scanLimitedRangeRead.result._meta.returnedLines, 0);
 
   const scanLimitedReadMany = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: scanLimitedRangeFile, paths: [dashFile], fromLine: 2, toLine: 2, maxLinesPerFile: 20, maxTotalBytes: 4096 },
   });
   assert.equal(scanLimitedReadMany.result._meta.files[0].scanLimited, true);
@@ -997,7 +1023,7 @@ try {
   assert.equal(scanLimitedReadMany.result._meta.files[1].scanLimited, undefined);
 
   const newlineLimitedRangeRead = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: manyByteLinesFile, fromLine: 1, toLine: 500, maxLines: 500 },
   });
   assert.equal(newlineLimitedRangeRead.result._meta.truncated, true);
@@ -1006,28 +1032,28 @@ try {
   assert.ok(Buffer.byteLength(newlineLimitedRangeRead.result.content[0].text, "utf8") <= 2048);
 
   const invalidRangeRead = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: largeFile, fromLine: 5, toLine: 1 },
   });
   assert.equal(invalidRangeRead.error.code, -32602);
   assert.match(invalidRangeRead.error.message, /toLine must be greater/);
 
   const invalidRangeTypeRead = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: largeFile, fromLine: "1" },
   });
   assert.equal(invalidRangeTypeRead.error.code, -32602);
   assert.match(invalidRangeTypeRead.error.message, /fromLine must be an integer/);
 
   const largerRangeRead = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: manyShortLinesFile, fromLine: 1, toLine: 300, maxLines: 500 },
   });
   assert.equal(largerRangeRead.result._meta.truncated, false);
   assert.equal(largerRangeRead.result._meta.returnedLines, 300);
 
   const lineFormattedRead = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: manyShortLinesFile, maxLines: 10, maxBytes: 4096 },
   });
   assert.equal(lineFormattedRead.result._meta.truncated, true);
@@ -1035,20 +1061,20 @@ try {
   assert.equal(lineFormattedRead.result._meta.truncation.reason, "format_lines");
 
   const invalidReadMaxLines = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: largeFile, maxLines: 201 },
   });
   assert.ok(invalidReadMaxLines.result, JSON.stringify(invalidReadMaxLines));
 
   const invalidReadMaxLinesTooHigh = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: largeFile, maxLines: 501 },
   });
   assert.equal(invalidReadMaxLinesTooHigh.error.code, -32602);
   assert.match(invalidReadMaxLinesTooHigh.error.message, /maxLines must be between 10 and 500/);
 
   const invalidReadMaxBytes = await request("tools/call", {
-    name: "read",
+    name: "sc-read",
     arguments: { path: largeFile, maxBytes: 1023 },
   });
   assert.equal(invalidReadMaxBytes.error.code, -32602);
@@ -1057,7 +1083,7 @@ try {
   const rgPath = await findRgForTest();
   if (rgPath) {
     const searched = await request("tools/call", {
-      name: "search",
+      name: "sc-search",
       arguments: { pattern: "file line 29", path: largeFile, maxMatches: 5 },
     });
     assert.ok(searched.result, JSON.stringify(searched));
@@ -1072,14 +1098,14 @@ try {
     assert.equal(searched.result._meta.matchesRead, 6);
 
     const dashPattern = await request("tools/call", {
-      name: "search",
+      name: "sc-search",
       arguments: { pattern: "-needle", path: dashFile, maxMatches: 5 },
     });
     assert.ok(dashPattern.result, JSON.stringify(dashPattern));
     assert.match(dashPattern.result.content[0].text, /-needle/);
 
     const absoluteRepoSearch = await request("tools/call", {
-      name: "search",
+      name: "sc-search",
       arguments: { pattern: "## Version Pinning", path: join(import.meta.dirname, "README.md"), maxMatches: 1 },
     });
     assert.ok(absoluteRepoSearch.result, JSON.stringify(absoluteRepoSearch));
@@ -1087,7 +1113,7 @@ try {
     assert.doesNotMatch(absoluteRepoSearch.result.content[0].text, new RegExp(import.meta.dirname.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")));
 
     const grepContext = await request("tools/call", {
-      name: "search",
+      name: "sc-search",
       arguments: { pattern: "file line 29", path: largeFile, contextLines: 1, maxMatches: 3 },
     });
     assert.ok(grepContext.result, JSON.stringify(grepContext));
@@ -1096,10 +1122,10 @@ try {
     assert.equal(grepContext.result._meta.shownMatches, 3);
     assert.equal(grepContext.result._meta.totalMatchesKnown, false);
     assert.equal(grepContext.result._meta.truncation.reason, "match_limit");
-    assert.match(grepContext.result.content[0].text, /\[truncated: match_limit; 3 matches shown; more exist; narrow path\/include or raise maxMatches\]/);
+    assert.match(grepContext.result.content[0].text, /\[truncated: match limit; 3 matches shown; more exist; narrow path\/include or raise maxMatches\]/);
 
     const limitedContext = await request("tools/call", {
-      name: "search",
+      name: "sc-search",
       arguments: { pattern: "match-", path: contextLimitFile, contextLines: 2, maxMatches: 1 },
     });
     assert.ok(limitedContext.result, JSON.stringify(limitedContext));
@@ -1109,10 +1135,10 @@ try {
     assert.doesNotMatch(limitedContext.result.content[0].text, /before-two-a/);
     assert.doesNotMatch(limitedContext.result.content[0].text, /before-two-b/);
     assert.doesNotMatch(limitedContext.result.content[0].text, /match-two/);
-    assert.match(limitedContext.result.content[0].text, /\[truncated: match_limit; 1 matches shown; more exist; narrow path\/include or raise maxMatches\]/);
+    assert.match(limitedContext.result.content[0].text, /\[truncated: match limit; 1 matches shown; more exist; narrow path\/include or raise maxMatches\]/);
 
     const byteLimitedSearch = await request("tools/call", {
-      name: "search",
+      name: "sc-search",
       arguments: { pattern: "format-byte-match", path: searchFormatFile, maxMatches: 100, maxLines: 200, maxBytes: 1024 },
     });
     assert.ok(byteLimitedSearch.result, JSON.stringify(byteLimitedSearch));
@@ -1121,7 +1147,7 @@ try {
     assert.ok(byteLimitedSearch.result._meta.response.returnedBytes <= 1024);
 
     const noMatchSearch = await request("tools/call", {
-      name: "search",
+      name: "sc-search",
       arguments: { pattern: "does-not-exist", path: largeFile, maxMatches: 5 },
     });
     assert.equal(noMatchSearch.result.content[0].text, "(no matches)");
@@ -1130,7 +1156,7 @@ try {
     assert.equal(noMatchSearch.result._meta.emptyReason, "no_matches");
 
     const noMatchGrepContext = await request("tools/call", {
-      name: "search",
+      name: "sc-search",
       arguments: { pattern: "does-not-exist", path: largeFile, maxMatches: 5 },
     });
     assert.equal(noMatchGrepContext.result.content[0].text, "(no matches)");
@@ -1140,14 +1166,14 @@ try {
   }
 
   const invalidSearchMaxMatches = await request("tools/call", {
-    name: "search",
+    name: "sc-search",
     arguments: { pattern: "anything", maxMatches: 0 },
   });
   assert.equal(invalidSearchMaxMatches.error.code, -32602);
   assert.match(invalidSearchMaxMatches.error.message, /maxMatches must be between 1 and 1000/);
 
   const invalidSearchMaxBytes = await request("tools/call", {
-    name: "search",
+    name: "sc-search",
     arguments: { pattern: "anything", maxBytes: MAX_BYTES + 1 },
   });
   assert.equal(invalidSearchMaxBytes.error.code, -32602);
@@ -1157,7 +1183,7 @@ try {
     const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
     let payload;
     try {
-      await callTool('search', { pattern: 'needle', path: '.' });
+      await callTool('sc-search', { pattern: 'needle', path: '.' });
       payload = { ok: true };
     } catch (error) {
       payload = { ok: false, code: error.code, message: error.message };
@@ -1182,7 +1208,7 @@ try {
   assert.match(missingRgPayload.message, /ripgrep was not found/);
 
   const missingAstLanguage = await request("tools/call", {
-    name: "search",
+    name: "sc-search",
     arguments: { engine: "ast", pattern: "assert.equal($A, $B)", path: "." },
   });
   assert.equal(missingAstLanguage.error.code, -32602);
@@ -1191,7 +1217,7 @@ try {
   const astGrepPath = await findAstGrepForTest();
   if (astGrepPath) {
     const astSearch = await request("tools/call", {
-      name: "search",
+      name: "sc-search",
       arguments: { engine: "ast", pattern: "assert.equal($A, $B)", language: "javascript", path: "smoke-test.js", maxMatches: 5 },
     });
     assert.ok(astSearch.result, JSON.stringify(astSearch));
@@ -1202,7 +1228,7 @@ try {
     assert.match(astSearch.result.content[0].text, /assert\.equal/);
 
     const inferredAstSearch = await request("tools/call", {
-      name: "search",
+      name: "sc-search",
       arguments: { engine: "ast", pattern: "assert.equal($A, $B)", path: "smoke-test.js", maxMatches: 3 },
     });
     assert.ok(inferredAstSearch.result, JSON.stringify(inferredAstSearch));
@@ -1210,7 +1236,7 @@ try {
     assert.equal(inferredAstSearch.result._meta.shownMatches, 3);
 
     const astNoMatches = await request("tools/call", {
-      name: "search",
+      name: "sc-search",
       arguments: { engine: "ast", pattern: "definitelyNoSuchCall($A)", language: "javascript", path: "smoke-test.js", maxMatches: 5 },
     });
     assert.equal(astNoMatches.result.content[0].text, "(no matches)");
@@ -1247,7 +1273,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
 
   const fakeAstRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
     const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
-    const result = await callTool('search', { engine: 'ast', pattern: 'target()', path: '.', include: '**/*.ts', contextLines: 1, maxMatches: 1, maxLines: 40 });
+    const result = await callTool('sc-search', { engine: 'ast', pattern: 'target()', path: '.', include: '**/*.ts', contextLines: 1, maxMatches: 1, maxLines: 40 });
     console.log(JSON.stringify({ text: result.content[0].text, meta: result._meta }));
   `], {
     cwd: tempDir,
@@ -1266,13 +1292,13 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
   assert.match(fakeAstPayload.text, /src\/example\.ts:5:3: target\(\)/);
   assert.match(fakeAstPayload.text, /> 5: target\(\);/);
   assert.match(fakeAstPayload.text, / 4: before\(\);/);
-  assert.match(fakeAstPayload.text, /\[truncated: match_limit; 1 matches shown; more exist; narrow path\/include or raise maxMatches\]/);
+  assert.match(fakeAstPayload.text, /\[truncated: match limit; 1 matches shown; more exist; narrow path\/include or raise maxMatches\]/);
 
   const missingAstGrepRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
     const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
     let payload;
     try {
-      await callTool('search', { engine: 'ast', pattern: 'foo($A)', language: 'javascript', path: '.' });
+      await callTool('sc-search', { engine: 'ast', pattern: 'foo($A)', language: 'javascript', path: '.' });
       payload = { ok: true };
     } catch (error) {
       payload = { ok: false, code: error.code, message: error.message };
@@ -1298,7 +1324,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
 
   const html = `<html><body>${Array.from({ length: 300 }, (_, i) => `<p>line ${i}</p>`).join("")}</body></html>`;
   const fetched = await request("tools/call", {
-    name: "fetch",
+    name: "sc-fetch",
     arguments: { url: `data:text/html,${encodeURIComponent(html)}`, force: true, maxLines: 20 },
   });
   assert.ok(fetched.result, JSON.stringify(fetched));
@@ -1313,42 +1339,42 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
   assert.match(fetched.result.content[0].text, /\[omitted: \d+ lines\]/);
 
   const fetchedAgain = await request("tools/call", {
-    name: "fetch",
+    name: "sc-fetch",
     arguments: { url: `data:text/html,${encodeURIComponent(html)}`, maxLines: 20 },
   });
   assert.equal(fetchedAgain.result._meta.cached, false);
   assert.equal(fetchedAgain.result._meta.downloadLimited, true);
 
   const entityFetch = await request("tools/call", {
-    name: "fetch",
+    name: "sc-fetch",
     arguments: { url: `data:text/html,${encodeURIComponent("<p>A&#8212;B &#x2014; C</p>")}`, force: true, maxLines: 20 },
   });
   assert.match(entityFetch.result.content[0].text, /A.B . C/s);
   assert.doesNotMatch(entityFetch.result.content[0].text, /&#/);
 
   const invalidForce = await request("tools/call", {
-    name: "fetch",
+    name: "sc-fetch",
     arguments: { url: "data:text/plain,ok", force: "false" },
   });
   assert.equal(invalidForce.error.code, -32602);
   assert.match(invalidForce.error.message, /force must be a boolean/);
 
   const invalidFetchMaxLines = await request("tools/call", {
-    name: "fetch",
+    name: "sc-fetch",
     arguments: { url: "data:text/plain,ok", maxLines: "20" },
   });
   assert.equal(invalidFetchMaxLines.error.code, -32602);
   assert.match(invalidFetchMaxLines.error.message, /maxLines must be an integer/);
 
   const invalidFetchMaxBytes = await request("tools/call", {
-    name: "fetch",
+    name: "sc-fetch",
     arguments: { url: "data:text/plain,ok", maxBytes: "1024" },
   });
   assert.equal(invalidFetchMaxBytes.error.code, -32602);
   assert.match(invalidFetchMaxBytes.error.message, /maxBytes must be an integer/);
 
   const invalidFetchUrl = await request("tools/call", {
-    name: "fetch",
+    name: "sc-fetch",
     arguments: { url: "not a url" },
   });
   assert.equal(invalidFetchUrl.error.code, -32602);
@@ -1358,7 +1384,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
     const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
     let payload;
     try {
-      await callTool('fetch', { url: 'data:text/plain,ok' });
+      await callTool('sc-fetch', { url: 'data:text/plain,ok' });
       payload = { ok: true };
     } catch (error) {
       payload = { ok: false, code: error.code, message: error.message };
@@ -1381,7 +1407,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
   assert.match(blockedProtocolPayload.message, /only allows http and https/);
 
   const limitedFetch = await request("tools/call", {
-    name: "fetch",
+    name: "sc-fetch",
     arguments: { url: `data:text/plain,${encodeURIComponent("🙂".repeat(2048))}`, force: true, maxLines: 20 },
   });
   assert.equal(limitedFetch.result._meta.downloadLimited, true);
@@ -1390,7 +1416,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
   assert.doesNotMatch(limitedFetch.result.content[0].text, /�/);
 
   const formatLimitedFetch = await request("tools/call", {
-    name: "fetch",
+    name: "sc-fetch",
     arguments: { url: `data:text/plain,${encodeURIComponent(Array.from({ length: 80 }, (_, i) => `line-${i}`).join("\n"))}`, force: true, maxLines: 10, maxBytes: 4096 },
   });
   assert.equal(formatLimitedFetch.result._meta.truncated, true);
@@ -1398,13 +1424,13 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
 
   const cacheUrl = `data:text/plain,${encodeURIComponent(`cache-${Date.now()}`)}`;
   const uncachedFetch = await request("tools/call", {
-    name: "fetch",
+    name: "sc-fetch",
     arguments: { url: cacheUrl, force: true },
   });
   assert.equal(uncachedFetch.result._meta.cached, false);
   assertSavingsMeta(uncachedFetch.result._meta);
   const cachedFetch = await request("tools/call", {
-    name: "fetch",
+    name: "sc-fetch",
     arguments: { url: cacheUrl },
   });
   assert.equal(cachedFetch.result._meta.cached, true);
@@ -1416,7 +1442,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
     import { join } from 'node:path';
     const { callTool } = await import('./src/tools.js');
     const urls = Array.from({ length: 20 }, (_, i) => 'data:text/plain,' + encodeURIComponent('cache-race-' + i));
-    await Promise.all(urls.map((url) => callTool('fetch', { url, force: true })));
+    await Promise.all(urls.map((url) => callTool('sc-fetch', { url, force: true })));
     const cache = JSON.parse(await readFile(join(process.env.HOME, '.simple-context-limiter', 'cache.json'), 'utf8'));
     console.log(Object.keys(cache).length);
   `], {
@@ -1436,9 +1462,9 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
     const one = 'data:text/plain,' + encodeURIComponent('a'.repeat(700));
     const two = 'data:text/plain,' + encodeURIComponent('b'.repeat(700));
     const { callTool } = await import('./src/tools.js');
-    const first = await callTool('fetch', { url: one, force: true });
-    const second = await callTool('fetch', { url: two, force: true });
-    const firstAgain = await callTool('fetch', { url: one });
+    const first = await callTool('sc-fetch', { url: one, force: true });
+    const second = await callTool('sc-fetch', { url: two, force: true });
+    const firstAgain = await callTool('sc-fetch', { url: one });
     console.log(JSON.stringify({ first: first._meta.cached, second: second._meta.cached, firstAgain: firstAgain._meta.cached }));
   `], {
     cwd: import.meta.dirname,
@@ -1484,14 +1510,14 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
 
     const diffRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
       const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
-      const diff = await callTool('diff', { maxFiles: 1, maxHunks: 1, maxBytes: 4096 });
-      const hunkLimitedDiff = await callTool('diff', { maxFiles: 10, maxHunks: 1, maxBytes: 4096 });
-      const formatLimitedDiff = await callTool('diff', { maxFiles: 10, maxHunks: 10, maxLines: 10, maxBytes: 4096 });
-      const blankPathDiff = await callTool('diff', { path: '', maxBytes: 4096 });
-      const changedFiles = await callTool('diff', { mode: 'status', maxBytes: 4096 });
-      const history = await callTool('diff', { mode: 'history', maxCommits: 5, maxBytes: 4096 });
-      const noStagedStatus = await callTool('diff', { mode: 'status', staged: true, maxBytes: 4096 });
-      const noStagedDiff = await callTool('diff', { staged: true, maxBytes: 4096 });
+      const diff = await callTool('sc-diff', { maxFiles: 1, maxHunks: 1, maxBytes: 4096 });
+      const hunkLimitedDiff = await callTool('sc-diff', { maxFiles: 10, maxHunks: 1, maxBytes: 4096 });
+      const formatLimitedDiff = await callTool('sc-diff', { maxFiles: 10, maxHunks: 10, maxLines: 10, maxBytes: 4096 });
+      const blankPathDiff = await callTool('sc-diff', { path: '', maxBytes: 4096 });
+      const changedFiles = await callTool('sc-diff', { mode: 'status', maxBytes: 4096 });
+      const history = await callTool('sc-diff', { mode: 'history', maxCommits: 5, maxBytes: 4096 });
+      const noStagedStatus = await callTool('sc-diff', { mode: 'status', staged: true, maxBytes: 4096 });
+      const noStagedDiff = await callTool('sc-diff', { staged: true, maxBytes: 4096 });
       console.log(JSON.stringify({ diff: { text: diff.content[0].text, meta: diff._meta }, hunkLimitedDiff: { text: hunkLimitedDiff.content[0].text, meta: hunkLimitedDiff._meta }, formatLimitedDiff: { text: formatLimitedDiff.content[0].text, meta: formatLimitedDiff._meta }, blankPathDiff: { text: blankPathDiff.content[0].text, meta: blankPathDiff._meta }, changedFiles: { text: changedFiles.content[0].text, meta: changedFiles._meta }, history: { text: history.content[0].text, meta: history._meta }, noStagedStatus: { text: noStagedStatus.content[0].text, meta: noStagedStatus._meta }, noStagedDiff: { text: noStagedDiff.content[0].text, meta: noStagedDiff._meta } }));
     `], {
       cwd: gitDir,
@@ -1549,8 +1575,8 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
     await git(["add", "a.txt"]);
     const stagedStatusRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
       const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
-      const status = await callTool('diff', { mode: 'status', staged: true, maxBytes: 4096 });
-      const unstagedStatus = await callTool('diff', { mode: 'status', staged: false, maxBytes: 4096 });
+      const status = await callTool('sc-diff', { mode: 'status', staged: true, maxBytes: 4096 });
+      const unstagedStatus = await callTool('sc-diff', { mode: 'status', staged: false, maxBytes: 4096 });
       console.log(JSON.stringify({ staged: { text: status.content[0].text, meta: status._meta }, unstaged: { text: unstagedStatus.content[0].text, meta: unstagedStatus._meta } }));
     `], {
       cwd: gitDir,
@@ -1577,10 +1603,10 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
 
   const statsRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
     const { callTool } = await import('./src/tools.js');
-    await callTool('run', { command: ${JSON.stringify(`${shellQuote(process.execPath)} -e "console.log('x'.repeat(50000))"`)}, maxLines: 20 });
-    await callTool('run', { command: ${JSON.stringify(`${shellQuote(process.execPath)} -e "console.log('ok')"`)}, maxLines: 20 });
-    await callTool('fetch', { url: 'data:text/plain,' + encodeURIComponent('x'.repeat(2048)), force: true, maxLines: 20 });
-    const stats = await callTool('usage', {});
+    await callTool('sc-run', { command: ${JSON.stringify(`${shellQuote(process.execPath)} -e "console.log('x'.repeat(50000))"`)}, maxLines: 20 });
+    await callTool('sc-run', { command: ${JSON.stringify(`${shellQuote(process.execPath)} -e "console.log('ok')"`)}, maxLines: 20 });
+    await callTool('sc-fetch', { url: 'data:text/plain,' + encodeURIComponent('x'.repeat(2048)), force: true, maxLines: 20 });
+    const stats = await callTool('sc-usage', {});
     console.log(JSON.stringify({ text: stats.content[0].text, meta: stats._meta }));
   `], {
     cwd: import.meta.dirname,
@@ -1618,7 +1644,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
     import { readFile } from 'node:fs/promises';
     import { join } from 'node:path';
     const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
-    await callTool('discover', { mode: 'tree', path: '.', maxDepth: 1, maxEntries: 10 });
+    await callTool('sc-discover', { mode: 'tree', path: '.', maxDepth: 1, maxEntries: 10 });
     let projects = [];
     let usageExists = false;
     try {
@@ -1626,7 +1652,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
       projects = Object.keys(stats.projects);
     } catch {}
     try { await readFile(join(process.env.HOME, '.simple-context-limiter', 'usage.jsonl'), 'utf8'); usageExists = true; } catch {}
-    const report = await callTool('usage', { mode: 'report' });
+    const report = await callTool('sc-usage', { mode: 'report' });
     console.log(JSON.stringify({ projects, usageExists, reportText: report.content[0].text, reportMeta: report._meta }));
   `], {
     cwd: fallbackFilesDir,
@@ -1649,14 +1675,14 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
     import { join } from 'node:path';
     const { callTool } = await import('./src/tools.js');
     for (let i = 0; i < 3; i++) {
-      try { await callTool('run', { command: 'git log --oneline -1', maxLines: 20 }); } catch {}
+      try { await callTool('sc-run', { command: 'git log --oneline -1', maxLines: 20 }); } catch {}
     }
     for (let i = 0; i < 3; i++) {
-      try { await callTool('run', { command: 'npm ls --depth=0', maxLines: 20 }); } catch {}
+      try { await callTool('sc-run', { command: 'npm ls --depth=0', maxLines: 20 }); } catch {}
     }
-    await callTool('run', { command: ${JSON.stringify(isPowerShellConfigured() ? `& ${shellQuote(process.execPath)} -e "console.log('x'.repeat(50000))"` : `${shellQuote(process.execPath)} -e "console.log('x'.repeat(50000))"`)}, maxLines: 20 });
-    const report = await callTool('usage', { mode: 'report', maxEvents: 20 });
-    const guidance = await callTool('usage', { mode: 'guidance', maxEvents: 20 });
+    await callTool('sc-run', { command: ${JSON.stringify(isPowerShellConfigured() ? `& ${shellQuote(process.execPath)} -e "console.log('x'.repeat(50000))"` : `${shellQuote(process.execPath)} -e "console.log('x'.repeat(50000))"`)}, maxLines: 20 });
+    const report = await callTool('sc-usage', { mode: 'report', maxEvents: 20 });
+    const guidance = await callTool('sc-usage', { mode: 'guidance', maxEvents: 20 });
     const usageLog = await readFile(join(process.env.HOME, '.simple-context-limiter', 'usage.jsonl'), 'utf8');
     console.log(JSON.stringify({ text: report.content[0].text, guidance: guidance.content[0].text, meta: report._meta, guidanceMeta: guidance._meta, usageLog }));
   `], {
@@ -1674,9 +1700,9 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
   assert.match(usagePayload.text, /Usage summary/);
   assert.match(usagePayload.text, /run:/);
   assert.match(usagePayload.text, /git-history:/);
-  assert.match(usagePayload.text, /diff mode=history:/);
+  assert.match(usagePayload.text, /sc-diff mode=history:/);
   assert.match(usagePayload.guidance, /Usage guidance/);
-  assert.match(usagePayload.guidance, /diff mode=history:/);
+  assert.match(usagePayload.guidance, /sc-diff mode=history:/);
   assert.match(usagePayload.guidance, /run: 3 dependencies commands/);
   assert.doesNotMatch(usagePayload.guidance, /dependencies:/);
   assert.doesNotMatch(usagePayload.guidance, /infra_logs:/);
@@ -1705,7 +1731,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
       savedBytes: 9900,
       commandKind: 'git-history',
     }) + '\\n', 'utf8');
-    const report = await callTool('usage', { mode: 'report', maxEvents: 20 });
+    const report = await callTool('sc-usage', { mode: 'report', maxEvents: 20 });
     console.log(JSON.stringify({ text: report.content[0].text, meta: report._meta }));
   `], {
     cwd: import.meta.dirname,
@@ -1730,7 +1756,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
     import { join } from 'node:path';
     const { callTool } = await import('./src/tools.js');
     const command = ${JSON.stringify(isPowerShellConfigured() ? `& ${shellQuote(process.execPath)} -e "console.log('ok')"` : `${shellQuote(process.execPath)} -e "console.log('ok')"`)};
-    for (let i = 0; i < 40; i++) await callTool('run', { command });
+    for (let i = 0; i < 40; i++) await callTool('sc-run', { command });
     const file = join(process.env.HOME, '.simple-context-limiter', 'usage.jsonl');
     const fileStat = await stat(file);
     const text = await readFile(file, 'utf8');
@@ -1758,7 +1784,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
     import { readFile } from 'node:fs/promises';
     import { join } from 'node:path';
     const { callTool } = await import('./src/tools.js');
-    await callTool('run', { command: ${JSON.stringify(isPowerShellConfigured() ? `& ${shellQuote(process.execPath)} -e "console.log('ok')"` : `${shellQuote(process.execPath)} -e "console.log('ok')"`)} });
+    await callTool('sc-run', { command: ${JSON.stringify(isPowerShellConfigured() ? `& ${shellQuote(process.execPath)} -e "console.log('ok')"` : `${shellQuote(process.execPath)} -e "console.log('ok')"`)} });
     try { await readFile(join(process.env.HOME, '.simple-context-limiter', 'usage.jsonl'), 'utf8'); console.log('exists'); } catch { console.log('missing'); }
   `], {
     cwd: import.meta.dirname,
@@ -1810,12 +1836,12 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
   });
   await new Promise((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
   const { port } = httpServer.address();
-  const byteLimitedFetch = await callTool("fetch", { url: `http://127.0.0.1:${port}/large`, force: true, maxLines: 20, maxBytes: 1024 });
+  const byteLimitedFetch = await callTool("sc-fetch", { url: `http://127.0.0.1:${port}/large`, force: true, maxLines: 20, maxBytes: 1024 });
   assert.equal(byteLimitedFetch._meta.truncated, true);
   assert.equal(byteLimitedFetch._meta.truncation.reason, "format_bytes");
   assert.ok(byteLimitedFetch._meta.response.returnedBytes <= 1024);
   try {
-    await callTool("fetch", { url: `http://127.0.0.1:${port}/missing`, force: true });
+    await callTool("sc-fetch", { url: `http://127.0.0.1:${port}/missing`, force: true });
     assert.fail("expected fetch to reject HTTP errors");
   } catch (error) {
     const data = errorData(error);
@@ -1825,7 +1851,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
     assert.match(data.url, /127\.0\.0\.1/);
   }
   try {
-    await callTool("fetch", { url: `http://127.0.0.1:${port}/stream-error`, force: true });
+    await callTool("sc-fetch", { url: `http://127.0.0.1:${port}/stream-error`, force: true });
     assert.fail("expected fetch to reject streaming HTTP errors");
   } catch (error) {
     const data = errorData(error);
@@ -1845,7 +1871,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
       error.code = "ETEST";
       throw error;
     };
-    await callTool("fetch", { url: "https://example.test/unavailable", force: true });
+    await callTool("sc-fetch", { url: "https://example.test/unavailable", force: true });
     assert.fail("expected fetch to include URL for network errors");
   } catch (error) {
     const data = errorData(error);

@@ -1,4 +1,4 @@
-import { MAX_BYTES, MAX_LINES } from "../constants.js";
+import { DEFAULT_BYTES, MAX_BYTES, MAX_LINES } from "../constants.js";
 import { formatOutput } from "../output.js";
 import { commandError, runProcess } from "../process.js";
 import { recordStats } from "../stats.js";
@@ -14,7 +14,7 @@ export async function diffTool(args) {
     maxCommits,
     maxHunks = 20,
     maxLines = MAX_LINES,
-    maxBytes = MAX_BYTES,
+    maxBytes = DEFAULT_BYTES,
   } = args ?? {};
 
   let normalizedDiffPath = diffPath;
@@ -33,7 +33,7 @@ export async function diffTool(args) {
   const fileLimit = validateInteger(maxFiles, "diff maxFiles", 1, 100);
   const commitLimit = maxCommits === undefined ? fileLimit : validateInteger(maxCommits, "diff maxCommits", 1, 100);
   const hunkLimit = validateInteger(maxHunks, "diff maxHunks", 1, 200);
-  const lineLimit = validateInteger(maxLines, "diff maxLines", 10, 200);
+  const lineLimit = validateInteger(maxLines, "diff maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "diff maxBytes", 1024, MAX_BYTES);
 
   if (mode === "status") return await statusTool(normalizedDiffPath, staged, lineLimit, byteLimit);

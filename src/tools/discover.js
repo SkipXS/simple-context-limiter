@@ -1,12 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { MAX_BYTES, MAX_LINES, MAX_READ_BYTES } from "../constants.js";
+import { DEFAULT_BYTES, MAX_BYTES, MAX_LINES, MAX_READ_BYTES } from "../constants.js";
 import { decodeUtf8, formatOutput } from "../output.js";
 import { runProcess, runProcessLines } from "../process.js";
 import { recordStats } from "../stats.js";
 import { formatTruncationReason, invalidParams, omission, relativePath, savingsMeta, toolTextResult, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
-const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage"]);
+const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage", ".pi", ".opencode", ".cache"]);
 
 export async function discoverTool(args) {
   const { mode = "summary" } = args ?? {};
@@ -21,11 +21,11 @@ export async function discoverTool(args) {
 }
 
 async function filesMode(args) {
-  const { path: inputPath = ".", include, maxFiles = 500, maxLines = MAX_LINES, maxBytes = MAX_BYTES } = args ?? {};
+  const { path: inputPath = ".", include, maxFiles = 500, maxLines = MAX_LINES, maxBytes = DEFAULT_BYTES } = args ?? {};
   if (typeof inputPath !== "string" || inputPath.trim() === "") invalidParams("discover path must be a non-empty string when provided");
   if (include !== undefined && typeof include !== "string") invalidParams("discover include must be a string when provided");
   const fileLimit = validateInteger(maxFiles, "discover maxFiles", 1, 5000);
-  const lineLimit = validateInteger(maxLines, "discover maxLines", 10, 200);
+  const lineLimit = validateInteger(maxLines, "discover maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "discover maxBytes", 1024, MAX_BYTES);
 
   const started = Date.now();
@@ -117,11 +117,11 @@ async function walkFiles(root, current, state) {
 }
 
 async function treeMode(args) {
-  const { path: inputPath = ".", maxDepth = 3, maxEntries = 200, maxLines = MAX_LINES, maxBytes = MAX_BYTES } = args ?? {};
+  const { path: inputPath = ".", maxDepth = 3, maxEntries = 200, maxLines = MAX_LINES, maxBytes = DEFAULT_BYTES } = args ?? {};
   if (typeof inputPath !== "string" || inputPath.trim() === "") invalidParams("discover path must be a non-empty string when provided");
   const depthLimit = validateInteger(maxDepth, "discover maxDepth", 1, 10);
   const entryLimit = validateInteger(maxEntries, "discover maxEntries", 1, 2000);
-  const lineLimit = validateInteger(maxLines, "discover maxLines", 10, 200);
+  const lineLimit = validateInteger(maxLines, "discover maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "discover maxBytes", 1024, MAX_BYTES);
 
   const started = Date.now();
@@ -235,8 +235,8 @@ async function hasVisibleTreeChildren(directory) {
 }
 
 async function summaryMode(args) {
-  const { maxLines = MAX_LINES, maxBytes = MAX_BYTES } = args ?? {};
-  const lineLimit = validateInteger(maxLines, "discover maxLines", 10, 200);
+  const { maxLines = MAX_LINES, maxBytes = DEFAULT_BYTES } = args ?? {};
+  const lineLimit = validateInteger(maxLines, "discover maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "discover maxBytes", 1024, MAX_BYTES);
   const started = Date.now();
   const root = process.cwd();
@@ -319,10 +319,10 @@ async function readJsonIfExists(filePath) {
 }
 
 async function outlineMode(args) {
-  const { path: filePath, maxSymbols = 200, maxLines = MAX_LINES, maxBytes = MAX_BYTES } = args ?? {};
+  const { path: filePath, maxSymbols = 200, maxLines = MAX_LINES, maxBytes = DEFAULT_BYTES } = args ?? {};
   if (typeof filePath !== "string" || filePath.trim() === "") invalidParams("discover requires a non-empty path string for outline mode");
   const symbolLimit = validateInteger(maxSymbols, "discover maxSymbols", 1, 1000);
-  const lineLimit = validateInteger(maxLines, "discover maxLines", 10, 200);
+  const lineLimit = validateInteger(maxLines, "discover maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "discover maxBytes", 1024, MAX_BYTES);
   const resolved = path.resolve(filePath);
   const stat = await fs.promises.stat(resolved);

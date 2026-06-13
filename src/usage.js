@@ -195,16 +195,16 @@ function recommendTools(commandSummaries, toolSummaries) {
   const commandMap = new Map(commandSummaries.map((summary) => [summary.name, summary]));
   const toolMap = new Map(toolSummaries.map((summary) => [summary.name, summary]));
 
-  addRecommendation(recommendations, commandMap.get("git-history"), "diff mode=history", "Summarize git log output compactly without adding another tool.");
-  addRecommendation(recommendations, commandMap.get("dependencies"), "run", "Use bounded command output for npm/pnpm/yarn dependency inspection.");
-  addRecommendation(recommendations, commandMap.get("infra-logs"), "logs", "Extract relevant docker/kubectl log blocks.");
-  addRecommendation(recommendations, commandMap.get("filesystem-discovery"), "discover", "Use files/tree modes for bounded repository discovery.");
-  addRecommendation(recommendations, commandMap.get("file-read"), "read path/fromLine/paths", "Use targeted ranges for one file and paths for additional non-ranged file previews.");
+  addRecommendation(recommendations, commandMap.get("git-history"), "sc-diff mode=history", "Summarize git log output compactly without adding another tool.");
+  addRecommendation(recommendations, commandMap.get("dependencies"), "sc-run", "Use bounded command output for npm/pnpm/yarn dependency inspection.");
+  addRecommendation(recommendations, commandMap.get("infra-logs"), "sc-logs", "Extract relevant docker/kubectl log blocks.");
+  addRecommendation(recommendations, commandMap.get("filesystem-discovery"), "sc-discover", "Use files/tree modes for bounded repository discovery.");
+  addRecommendation(recommendations, commandMap.get("file-read"), "sc-read path/fromLine/paths", "Use targeted ranges for one file and paths for additional non-ranged file previews.");
 
   const search = commandMap.get("search-discovery");
   const searchTool = toolMap.get("search");
   if (search && (!searchTool || search.calls > searchTool.calls)) {
-    addRecommendation(recommendations, search, "search", "Use bounded search results with contextLines when surrounding lines are useful.");
+    addRecommendation(recommendations, search, "sc-search", "Use bounded search results with contextLines when surrounding lines are useful.");
   }
 
   return recommendations;

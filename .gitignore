@@ -1,4 +1,6 @@
 node_modules/
+.opencode/
+.pi/
 *.log
 *.tgz
 .DS_Store

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { MAX_BYTES, MAX_LINES, MAX_READ_BYTES, READ_RANGE_TIMEOUT_MS } from "../constants.js";
+import { DEFAULT_BYTES, MAX_BYTES, MAX_LINES, MAX_READ_BYTES, READ_RANGE_TIMEOUT_MS } from "../constants.js";
 import { decodeUtf8, formatOutput } from "../output.js";
 import { recordStats } from "../stats.js";
 import { formatTruncationReason, invalidParams, omission, omitUndefined, relativePath, savingsForText, toolTextResult, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
@@ -49,9 +49,9 @@ export async function readManyTool(args, toolName = "read") {
     maxLines,
     maxBytes,
     maxLinesPerFile = maxLines ?? MAX_LINES,
-    maxBytesPerFile = maxBytes ?? MAX_BYTES,
+    maxBytesPerFile = maxBytes ?? DEFAULT_BYTES,
     maxTotalLines = 200,
-    maxTotalBytes = MAX_BYTES,
+    maxTotalBytes = DEFAULT_BYTES,
     fromLine,
     toLine,
     lineNumbers = false,
@@ -132,7 +132,7 @@ async function mapLimited(items, limit, mapper) {
 }
 
 async function readFilePreview(args, toolName) {
-  const { path: filePath, maxLines = MAX_LINES, maxBytes = MAX_BYTES, fromLine, toLine, lineNumbers = false } = args ?? {};
+  const { path: filePath, maxLines = MAX_LINES, maxBytes = DEFAULT_BYTES, fromLine, toLine, lineNumbers = false } = args ?? {};
   if (typeof filePath !== "string" || filePath.trim() === "") {
     invalidParams(`${toolName} requires a non-empty path string`);
   }
@@ -155,7 +155,10 @@ async function readFilePreview(args, toolName) {
     ? await readLineRange(resolved, range.fromLine, range.toLine, lineLimit, MAX_READ_BYTES, MAX_READ_BYTES, READ_RANGE_TIMEOUT_MS)
     : await readLimitedFile(resolved, stat.size, MAX_READ_BYTES);
   const displayText = lineNumbers ? addLineNumbers(text, range?.fromLine ?? 1) : text;
-  const formatted = formatOutput(displayText, lineLimit, byteLimit);
+  const responseByteLimit = Math.min(byteLimit, MAX_READ_BYTES);
+  const formatted = rangeMode
+    ? formatReadRangeOutput(displayText, resolved, range, lineLimit, responseByteLimit)
+    : formatOutput(displayText, lineLimit, responseByteLimit);
   const contextSavings = savingsForReturnedBytes(stat.size, formatted.returnedBytes);
   const truncated = formatted.truncated || rangeLimited || limited || scanLimited || scanTimedOut;
   const meta = withResponseMeta({
@@ -180,7 +183,7 @@ async function readFilePreview(args, toolName) {
     scanTimedOut,
     lineNumbers,
   });
-  return toolTextResult(formatted.text, meta, Math.min(byteLimit, MAX_READ_BYTES));
+  return toolTextResult(formatted.text, meta, responseByteLimit);
 }
 
 function savingsForReturnedBytes(totalBytes, returnedBytes) {
@@ -203,6 +206,43 @@ function readTruncationReason({ formatted, lineLimit, byteLimit, limited, rangeL
 
 function readTruncationHint({ rangeMode }) {
   return rangeMode ? "Narrow fromLine/toLine or increase maxLines/maxBytes." : "Increase maxLines/maxBytes or read a smaller file.";
+}
+
+function formatReadRangeOutput(text, resolvedPath, range, maxLines, maxBytes) {
+  const header = readRangeHeader(resolvedPath, range);
+  const headerBytes = Buffer.byteLength(`${header}\n`, "utf8");
+  const contentLimit = Math.max(1024, maxBytes - headerBytes);
+  const content = formatOutput(text, maxLines, contentLimit);
+  let contentText = content.text;
+  let trimmedForHeader = false;
+
+  const allowedContentBytes = Math.max(0, maxBytes - headerBytes);
+  if (Buffer.byteLength(contentText, "utf8") > allowedContentBytes) {
+    contentText = decodeUtf8(Buffer.from(contentText, "utf8").subarray(0, allowedContentBytes), { trimEnd: true });
+    trimmedForHeader = true;
+  }
+
+  const output = `${header}\n${contentText}`;
+  const totalBytes = headerBytes + content.totalBytes;
+  const returnedBytes = Buffer.byteLength(output, "utf8");
+  const savedBytes = Math.max(0, totalBytes - returnedBytes);
+
+  return {
+    text: output,
+    totalLines: output.split("\n").length,
+    totalBytes,
+    returnedBytes,
+    savedBytes,
+    savedPercent: totalBytes > 0 ? Math.round((savedBytes / totalBytes) * 100) : 0,
+    estimatedTokensSaved: Math.ceil(savedBytes / 4),
+    truncated: content.truncated || trimmedForHeader,
+  };
+}
+
+function readRangeHeader(resolvedPath, range) {
+  const displayPath = relativePath(resolvedPath) ?? resolvedPath;
+  const end = range.toLine === Infinity ? "end" : range.toLine;
+  return `--- ${displayPath}:${range.fromLine}-${end} ---`;
 }
 
 function readManyTruncationReason(formatted, maxLines, maxBytes, results) {

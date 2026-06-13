@@ -6,7 +6,8 @@ export const SERVER_NAME = "simple-context-limiter";
 export const SERVER_VERSION = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 export const MAX_LINES = 60;
-export const MAX_BYTES = 32 * 1024;
+export const DEFAULT_BYTES = 32 * 1024;
+export const MAX_BYTES = Math.max(DEFAULT_BYTES, normalizeByteLimit(process.env.SIMPLE_CONTEXT_LIMITER_MAX_RESPONSE_BYTES, 64 * 1024));
 export const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
 export const MIN_COMMAND_TIMEOUT_MS = 100;
 export const MAX_COMMAND_TIMEOUT_MS = 30 * 60_000;
@@ -40,7 +41,7 @@ export const RG_NAME = process.platform === "win32" ? "rg.exe" : "rg";
 const PROJECT_MARKERS = [".git", "package.json", "pyproject.toml", "Cargo.toml", "go.mod", "pom.xml", "build.gradle", "deno.json", "deno.jsonc"];
 
 export function projectKey() {
-  const cwd = path.resolve(process.cwd());
+  const cwd = canonicalPath(process.cwd());
   const projectRoot = findProjectRoot(cwd);
   if (projectRoot) return projectRoot;
   return isTempPath(cwd) ? undefined : cwd;
@@ -57,8 +58,19 @@ function findProjectRoot(startDir) {
 }
 
 function isTempPath(value) {
-  const relative = path.relative(path.resolve(os.tmpdir()), value);
+  const tempRoot = canonicalPath(os.tmpdir());
+  const candidate = canonicalPath(value);
+  const relative = path.relative(tempRoot, candidate);
   return relative === "" || (relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function canonicalPath(value) {
+  const resolved = path.resolve(value);
+  try {
+    return fs.realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
 }
 
 export function usageLogEnabled() {
