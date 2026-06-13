@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { ALLOW_NON_HTTP_FETCH, CACHE_TTL_MS, DEFAULT_BYTES, MAX_BYTES, MAX_FETCH_BYTES, MAX_LINES, SERVER_VERSION } from "../constants.js";
+import { ALLOW_NON_HTTP_FETCH, CACHE_TTL_MS, DEFAULT_BYTES, FETCH_PUBLIC_ONLY, MAX_BYTES, MAX_FETCH_BYTES, MAX_LINES, SERVER_VERSION } from "../constants.js";
 import { getCache, updateCache } from "../cache.js";
 import { formatOutput } from "../output.js";
 import { recordStats } from "../stats.js";
@@ -71,14 +72,17 @@ async function fetchUrl(url, { force = false, cache: cacheArg } = {}) {
     invalidParams("fetch only allows http and https URLs by default; set SIMPLE_CONTEXT_LIMITER_ALLOW_NON_HTTP_FETCH=1 to allow other schemes");
   }
 
+  if (FETCH_PUBLIC_ONLY) await validatePublicFetchUrl(url);
+
   const key = createHash("sha256").update(url).digest("hex");
   const started = Date.now();
-  const initialCachePolicy = fetchCachePolicy(url, undefined, cacheArg);
+  const initialCachePolicy = await fetchCachePolicy(url, undefined, cacheArg);
   if (initialCachePolicy.read && !force) {
     const currentCache = await getCache();
     const cached = currentCache[key];
-    const cachedCachePolicy = cached ? fetchCachePolicy(url, cached.finalUrl ?? url, cacheArg) : initialCachePolicy;
+    const cachedCachePolicy = cached ? await fetchCachePolicy(url, cached.finalUrl ?? url, cacheArg) : initialCachePolicy;
     if (cachedCachePolicy.read && cached && !cached.limited && Date.now() - cached.ts < CACHE_TTL_MS) {
+      if (FETCH_PUBLIC_ONLY) await validatePublicFetchUrl(cached.finalUrl ?? url);
       return {
         content: cached.content,
         cached: true,
@@ -98,19 +102,7 @@ async function fetchUrl(url, { force = false, cache: cacheArg } = {}) {
     }
   }
 
-  let res;
-  try {
-    res = await fetch(url, {
-      headers: { "User-Agent": `simple-context-limiter/${SERVER_VERSION}` },
-      signal: AbortSignal.timeout(30_000),
-    });
-  } catch (cause) {
-    const error = new Error(`Fetch failed: ${url}`);
-    error.code = -32000;
-    error.url = url;
-    error.cause = cause;
-    throw error;
-  }
+  const res = await fetchWithPolicy(url);
 
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});
@@ -139,7 +131,7 @@ async function fetchUrl(url, { force = false, cache: cacheArg } = {}) {
   const { text: raw, limited } = await readLimitedText(res, MAX_FETCH_BYTES, contentInfo.charset);
   const text = htmlStripped ? htmlToText(raw) : raw;
   const finalUrl = res.url || url;
-  const finalCachePolicy = fetchCachePolicy(url, finalUrl, cacheArg);
+  const finalCachePolicy = await fetchCachePolicy(url, finalUrl, cacheArg);
   const metadata = {
     url,
     finalUrl,
@@ -168,17 +160,67 @@ async function fetchUrl(url, { force = false, cache: cacheArg } = {}) {
   };
 }
 
-function fetchCachePolicy(url, finalUrl, cacheArg) {
+async function fetchCachePolicy(url, finalUrl, cacheArg) {
   if (cacheArg === false) return { read: false, write: false, reason: "per_call_disabled" };
   if (cacheArg === true) return { read: true, write: true, reason: undefined };
 
   const envMode = fetchCacheEnvMode();
   if (envMode === "off") return { read: false, write: false, reason: "env_disabled" };
 
-  const privateUrl = isPrivateFetchUrl(url) || (finalUrl ? isPrivateFetchUrl(finalUrl) : false);
-  if (privateUrl && envMode !== "all") return { read: false, write: false, reason: "private_address" };
+  const skipReason = await fetchCacheSkipReason(url) ?? (finalUrl ? await fetchCacheSkipReason(finalUrl) : undefined);
+  if (skipReason && envMode !== "all") return { read: false, write: false, reason: skipReason };
 
   return { read: true, write: true, reason: undefined };
+}
+
+async function fetchWithPolicy(url) {
+  if (!FETCH_PUBLIC_ONLY) return await fetchOnce(url);
+
+  let currentUrl = url;
+  for (let redirects = 0; redirects <= 10; redirects++) {
+    await validatePublicFetchUrl(currentUrl);
+    const res = await fetchOnce(currentUrl, { redirect: "manual" });
+    if (!isRedirectStatus(res.status)) return res;
+
+    const location = res.headers.get("location");
+    await res.body?.cancel().catch(() => {});
+    if (!location) return res;
+    currentUrl = new URL(location, currentUrl).href;
+  }
+
+  const error = new Error(`Fetch failed: ${url} (too many redirects)`);
+  error.code = -32000;
+  error.url = url;
+  throw error;
+}
+
+async function fetchOnce(url, options = {}) {
+  try {
+    return await fetch(url, {
+      headers: { "User-Agent": `simple-context-limiter/${SERVER_VERSION}` },
+      signal: AbortSignal.timeout(30_000),
+      ...options,
+    });
+  } catch (cause) {
+    const error = new Error(`Fetch failed: ${url}`);
+    error.code = -32000;
+    error.url = url;
+    error.cause = cause;
+    throw error;
+  }
+}
+
+async function validatePublicFetchUrl(url) {
+  const reason = await fetchCacheSkipReason(url);
+  if (!reason) return;
+  const error = new Error(`Fetch blocked by SIMPLE_CONTEXT_LIMITER_FETCH_PUBLIC_ONLY: ${reason}`);
+  error.code = -32602;
+  error.url = url;
+  throw error;
+}
+
+function isRedirectStatus(status) {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
 }
 
 function fetchCacheEnvMode() {
@@ -188,10 +230,24 @@ function fetchCacheEnvMode() {
   return "public";
 }
 
-function isPrivateFetchUrl(value) {
+export async function fetchCacheSkipReason(value, lookupHost = lookup) {
   let parsed;
-  try { parsed = new URL(value); } catch { return false; }
-  return isPrivateLiteralHost(parsed.hostname);
+  try { parsed = new URL(value); } catch { return undefined; }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
+
+  const host = normalizeHostname(parsed.hostname);
+  if (!host) return undefined;
+  if (isPrivateLiteralHost(host)) return "private_address";
+  if (isIP(host)) return undefined;
+
+  let addresses;
+  try {
+    addresses = await lookupHost(host, { all: true, verbatim: true });
+  } catch {
+    return "unresolved_host";
+  }
+
+  return addresses.some((entry) => isPrivateLiteralHost(entry.address)) ? "private_address" : undefined;
 }
 
 function isPrivateLiteralHost(hostname) {
@@ -219,13 +275,21 @@ function parseIpv4(host) {
   return octets;
 }
 
-function isPrivateIpv4([a, b]) {
-  return a === 0
-    || a === 10
-    || a === 127
-    || (a === 172 && b >= 16 && b <= 31)
-    || (a === 192 && b === 168)
-    || (a === 169 && b === 254);
+function isPrivateIpv4([a, b, c, d]) {
+  return a === 0 // current network
+    || a === 10 // RFC1918 private
+    || a === 127 // loopback
+    || (a === 100 && b >= 64 && b <= 127) // RFC6598 shared/CGNAT
+    || (a === 169 && b === 254) // link-local
+    || (a === 172 && b >= 16 && b <= 31) // RFC1918 private
+    || (a === 192 && b === 0 && c === 0) // IETF protocol assignments
+    || (a === 192 && b === 0 && c === 2) // TEST-NET-1
+    || (a === 192 && b === 168) // RFC1918 private
+    || (a === 198 && (b === 18 || b === 19)) // benchmarking
+    || (a === 198 && b === 51 && c === 100) // TEST-NET-2
+    || (a === 203 && b === 0 && c === 113) // TEST-NET-3
+    || a >= 224 // multicast/reserved/broadcast, including 255.255.255.255
+    || (a === 255 && b === 255 && c === 255 && d === 255);
 }
 
 function isPrivateIpv6(host) {

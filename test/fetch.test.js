@@ -14,6 +14,7 @@ process.env.HOME = testHome;
 process.env.USERPROFILE = testHome;
 
 const { callTool } = await import("../src/tools.js");
+const { fetchCacheSkipReason } = await import("../src/tools/fetch.js");
 const { CACHE_FILE } = await import("../src/constants.js");
 
 const servers = new Set();
@@ -64,6 +65,36 @@ await describe("sc-fetch", async () => {
     assert.equal(second._meta.cached, false);
     assert.match(second.content[0].text, /zero-host-secret-2/);
     assert.deepEqual(await readCache(), {});
+  });
+
+  await it("classifies DNS names resolving to private or special-use addresses as cache-private", async () => {
+    const privateReason = await fetchCacheSkipReason("http://internal.example.test/secret", async () => [
+      { address: "10.0.0.5", family: 4 },
+    ]);
+    const cgnatReason = await fetchCacheSkipReason("http://cgnat.example.test/", async () => [
+      { address: "100.64.0.1", family: 4 },
+    ]);
+    const benchmarkReason = await fetchCacheSkipReason("http://benchmark.example.test/", async () => [
+      { address: "198.18.0.1", family: 4 },
+    ]);
+    const documentationReason = await fetchCacheSkipReason("http://docs.example.test/", async () => [
+      { address: "192.0.2.1", family: 4 },
+    ]);
+    const publicReason = await fetchCacheSkipReason("http://public.example.test/", async () => [
+      { address: "93.184.216.34", family: 4 },
+    ]);
+    const unresolvedReason = await fetchCacheSkipReason("http://missing.example.test/", async () => {
+      const error = new Error("not found");
+      error.code = "ENOTFOUND";
+      throw error;
+    });
+
+    assert.equal(privateReason, "private_address");
+    assert.equal(cgnatReason, "private_address");
+    assert.equal(benchmarkReason, "private_address");
+    assert.equal(documentationReason, "private_address");
+    assert.equal(publicReason, undefined);
+    assert.equal(unresolvedReason, "unresolved_host");
   });
 
   await it("supports explicit and environment cache opt-in for private literal hosts", async () => {

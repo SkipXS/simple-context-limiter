@@ -58,7 +58,7 @@ Response `_meta` includes:
 }
 ```
 
-Command output collection is capped at 10 MB by default before formatting. Override with `SIMPLE_CONTEXT_LIMITER_MAX_COMMAND_BYTES` if needed. Command timeout defaults to 120 seconds and can be set per call with `timeoutMs` from 100ms to 30 minutes.
+Command output collection is capped at 10 MB by default before formatting. If a command crosses that cap and still exits cleanly, `sc-run` can return the bounded stdout preview; if the cap stops the process or the process exits non-zero, the call is reported as an error with exit/signal metadata. Override with `SIMPLE_CONTEXT_LIMITER_MAX_COMMAND_BYTES` if needed. Command timeout defaults to 120 seconds and can be set per call with `timeoutMs` from 100ms to 30 minutes.
 
 ### `sc-logs`
 
@@ -311,7 +311,7 @@ Add this to your project `opencode.json` or global `~/.config/opencode/opencode.
   "mcp": {
     "simple-context-limiter": {
       "type": "local",
-      "command": ["npx", "-y", "github:SkipXS/simple-context-limiter#main"],
+      "command": ["npx", "-y", "simple-context-limiter@1.1.0"],
       "env": {
         "SIMPLE_CONTEXT_LIMITER_SHELL": "bash"
       }
@@ -333,7 +333,7 @@ Add this to `~/.pi/agent/mcp.json`:
   "mcpServers": {
     "simple-context-limiter": {
       "command": "npx",
-      "args": ["-y", "github:SkipXS/simple-context-limiter#main"],
+      "args": ["-y", "simple-context-limiter@1.1.0"],
       "env": {
         "SIMPLE_CONTEXT_LIMITER_SHELL": "bash"
       },
@@ -375,7 +375,7 @@ On Windows with Git for Windows, use the full path if `bash` is not on `PATH`:
 ### Claude Code
 
 ```bash
-claude mcp add simple-context-limiter -- npx -y github:SkipXS/simple-context-limiter#main
+claude mcp add simple-context-limiter -- npx -y simple-context-limiter@1.1.0
 ```
 
 If you need a specific command shell for `sc-run`, set `SIMPLE_CONTEXT_LIMITER_SHELL` in the environment that starts Claude Code.
@@ -395,7 +395,7 @@ npm run audit
 
 ## Version Pinning
 
-The examples above use GitHub `npx` with `#main` so clients pick up updates from the repository without maintaining a local checkout. For reproducible team setups, replace `#main` with an immutable Git tag such as `#v1.1.0`, or use a published npm version such as `simple-context-limiter@1.1.0`.
+The examples above use a pinned npm package version for fast, reproducible startup. To pick up repository updates without maintaining a local checkout, use an explicit GitHub ref such as `github:SkipXS/simple-context-limiter#main`; for reproducible team setups on GitHub, prefer an immutable tag such as `github:SkipXS/simple-context-limiter#v1.1.0`.
 
 OpenCode command using GitHub main:
 
@@ -409,7 +409,7 @@ For Pi using GitHub main:
 "args": ["-y", "github:SkipXS/simple-context-limiter#main"]
 ```
 
-Avoid omitting the ref entirely (`github:SkipXS/simple-context-limiter`) in long-running or concurrent MCP setups: it follows npm/GitHub defaults implicitly and is less explicit than choosing either `#main` for auto-updates or a version tag for reproducibility. On Windows, GitHub `npx` still adds wrapper layers, so keep `lifecycle: "lazy"` and rely on the server's explicit MCP shutdown handling.
+GitHub `npx` installs from source and may still do more setup than the npm package path; the package `prepack` hook is intentionally lightweight, while full validation lives in `npm run check` and `prepublishOnly`. Avoid omitting the ref entirely (`github:SkipXS/simple-context-limiter`) in long-running or concurrent MCP setups: it follows npm/GitHub defaults implicitly and is less explicit than choosing either `#main` for auto-updates or a version tag for reproducibility. On Windows, GitHub `npx` still adds wrapper layers, so keep `lifecycle: "lazy"` and rely on the server's explicit MCP shutdown handling.
 
 ## Environment Variables
 
@@ -421,7 +421,11 @@ Avoid omitting the ref entirely (`github:SkipXS/simple-context-limiter`) in long
 | `SIMPLE_CONTEXT_LIMITER_MAX_RESPONSE_BYTES` | `65536` | Max formatted response bytes accepted via `maxBytes`; per-call default stays `32768` |
 | `SIMPLE_CONTEXT_LIMITER_MAX_COMMAND_BYTES` | `10485760` | Max command output bytes collected before stopping the process |
 | `SIMPLE_CONTEXT_LIMITER_MAX_FETCH_BYTES` | `10485760` | Max downloaded bytes before parsing/caching |
-| `SIMPLE_CONTEXT_LIMITER_FETCH_CACHE` | public-text only | Set to `0`/`false`/`off` to disable default fetch cache use; set to `all`/`private` to also cache literal private/loopback/link-local hosts by default. Per-call `cache` overrides this. |
+| `SIMPLE_CONTEXT_LIMITER_FETCH_CACHE` | public-text only | Set to `0`/`false`/`off` to disable default fetch cache use; set to `all`/`private` to also cache private/loopback/link-local hosts by default, including DNS names that resolve to private addresses. Per-call `cache` overrides this. |
+| `SIMPLE_CONTEXT_LIMITER_DISABLE_COMMAND_TOOLS` | unset | Set to `1` to disable command-executing tools (`sc-run` and `sc-logs`). `SIMPLE_CONTEXT_LIMITER_DISABLE_RUN=1` is also accepted as an alias. |
+| `SIMPLE_CONTEXT_LIMITER_COMMAND_ALLOWLIST` | unset | Comma/semicolon/newline-delimited exact shell command allowlist for `sc-run`/`sc-logs`, e.g. `npm test,npm run check`. This is string matching before shell execution, not a sandbox. |
+| `SIMPLE_CONTEXT_LIMITER_FETCH_PUBLIC_ONLY` | unset | Set to `1` to block `sc-fetch` requests to localhost/private/special-use/unresolved hosts, including redirects checked hop-by-hop. |
+| `SIMPLE_CONTEXT_LIMITER_PATH_ROOTS` | unset | Comma/semicolon/newline-delimited filesystem roots allowed for local path tools (`sc-read`, `sc-search`, `sc-discover`, `sc-diff` path arguments). |
 | `SIMPLE_CONTEXT_LIMITER_MAX_READ_BYTES` | `10485760` | Max file bytes read before previewing |
 | `SIMPLE_CONTEXT_LIMITER_MAX_RPC_LINE_BYTES` | `1048576` | Max JSON-RPC input line bytes accepted before rejecting the request |
 | `SIMPLE_CONTEXT_LIMITER_MAX_RPC_BATCH_SIZE` | `50` | Max JSON-RPC requests accepted in one batch |
@@ -441,13 +445,39 @@ Avoid omitting the ref entirely (`github:SkipXS/simple-context-limiter`) in long
 
 ## Cache
 
-`sc-fetch` caches eligible textual fetched content for 1 hour in `~/.simple-context-limiter/cache.json` and prunes old entries on load/save. The cache is capped by entry count and total content bytes. Literal `localhost`, loopback, unspecified (`0.0.0.0/8`), link-local, RFC1918/private IPv4, IPv6 unique-local/link-local, and metadata IP URLs bypass persistent cache by default to avoid storing local secrets. Use per-call `cache: false` to disable cache for one request, `cache: true` to explicitly opt a trusted request in, `SIMPLE_CONTEXT_LIMITER_FETCH_CACHE=0` to disable default cache use, or `SIMPLE_CONTEXT_LIMITER_FETCH_CACHE=all` to cache private literal hosts by default. `force: true` means skip an existing cache entry and refresh; it is not a cache-disable control. Delete this file anytime to clear the cache.
+`sc-fetch` caches eligible textual fetched content for 1 hour in `~/.simple-context-limiter/cache.json` and prunes old entries on load/save. The cache is capped by entry count and total content bytes. Literal `localhost`, loopback, unspecified (`0.0.0.0/8`), link-local, RFC1918/private IPv4, common RFC6890/special-use IPv4 ranges, IPv6 unique-local/link-local, and DNS names resolving to private/special-use addresses bypass persistent cache by default to avoid storing local secrets. Use per-call `cache: false` to disable cache for one request, `cache: true` to explicitly opt a trusted request in, `SIMPLE_CONTEXT_LIMITER_FETCH_CACHE=0` to disable default cache use, or `SIMPLE_CONTEXT_LIMITER_FETCH_CACHE=all` to cache private hosts by default. `force: true` means skip an existing cache entry and refresh; it is not a cache-disable control. Delete this file anytime to clear the cache.
 
 `sc-usage` with `mode: "report"` reads `~/.simple-context-limiter/usage.jsonl`. Delete that file anytime to clear collected usage metadata.
 
 ## Privacy and Local Storage
 
-simple-context-limiter does not send telemetry to a hosted service, but it can read local files, run local commands, fetch local/private HTTP services, and write small local state files under `~/.simple-context-limiter/` on the machine running the server. Disable usage logs with `SIMPLE_CONTEXT_LIMITER_USAGE_LOG=0` or `SIMPLE_CONTEXT_LIMITER_DISABLE_USAGE_LOG=1`, disable aggregate stats with `SIMPLE_CONTEXT_LIMITER_STATS=0` or `SIMPLE_CONTEXT_LIMITER_DISABLE_STATS=1`, and disable default fetch caching with `SIMPLE_CONTEXT_LIMITER_FETCH_CACHE=0`. Delete `cache.json`, `usage.jsonl`, or stats files in that directory whenever you want to clear local history.
+simple-context-limiter does not send telemetry to a hosted service, but it can read local files, run local commands, fetch local/private HTTP services, and write small local state files under `~/.simple-context-limiter/` on the machine running the server. Disable usage logs with `SIMPLE_CONTEXT_LIMITER_USAGE_LOG=0` or `SIMPLE_CONTEXT_LIMITER_DISABLE_USAGE_LOG=1`, disable aggregate stats with `SIMPLE_CONTEXT_LIMITER_STATS=0` or `SIMPLE_CONTEXT_LIMITER_DISABLE_STATS=1`, and disable default fetch caching with `SIMPLE_CONTEXT_LIMITER_FETCH_CACHE=0`. For stricter shared/CI/remote-agent setups, set `SIMPLE_CONTEXT_LIMITER_DISABLE_COMMAND_TOOLS=1`, `SIMPLE_CONTEXT_LIMITER_FETCH_PUBLIC_ONLY=1`, and/or `SIMPLE_CONTEXT_LIMITER_PATH_ROOTS` to constrain the exposed local authority. Delete `cache.json`, `usage.jsonl`, or stats files in that directory whenever you want to clear local history.
+
+## Strict / Shared Environment Examples
+
+For a read-only-ish repo helper that cannot run shell commands, cannot fetch local/private networks, and cannot read outside the current checkout:
+
+```json
+{
+  "SIMPLE_CONTEXT_LIMITER_DISABLE_COMMAND_TOOLS": "1",
+  "SIMPLE_CONTEXT_LIMITER_FETCH_PUBLIC_ONLY": "1",
+  "SIMPLE_CONTEXT_LIMITER_PATH_ROOTS": "/path/to/checkout",
+  "SIMPLE_CONTEXT_LIMITER_FETCH_CACHE": "0",
+  "SIMPLE_CONTEXT_LIMITER_USAGE_LOG": "0"
+}
+```
+
+For CI where only known validation commands should be callable:
+
+```json
+{
+  "SIMPLE_CONTEXT_LIMITER_COMMAND_ALLOWLIST": "npm test,npm run check",
+  "SIMPLE_CONTEXT_LIMITER_FETCH_PUBLIC_ONLY": "1",
+  "SIMPLE_CONTEXT_LIMITER_PATH_ROOTS": "/path/to/checkout"
+}
+```
+
+These controls reduce accidental authority exposure but do not turn shell execution or network access into a sandbox. Run the MCP server with OS/container permissions appropriate for the trust boundary.
 
 ## Contributing, Security, and Changes
 

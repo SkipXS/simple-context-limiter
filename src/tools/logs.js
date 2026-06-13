@@ -2,7 +2,7 @@ import { COMMAND_SHELL_NAME, DEFAULT_COMMAND_TIMEOUT_MS, DEFAULT_BYTES, MAX_BYTE
 import { formatOutput } from "../output.js";
 import { runCommandResult } from "../process.js";
 import { recordStats } from "../stats.js";
-import { formatTruncationReason, invalidParams, omission, savingsForText, toolTextResult, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
+import { formatTruncationReason, invalidParams, omission, savingsForText, toolTextResult, truncationMeta, validateCommandPolicy, validateInteger, withResponseMeta } from "./shared.js";
 
 export async function logsTool(args) {
   return await logsResult(args, "logs");
@@ -27,6 +27,7 @@ export async function logsResult(args, toolName) {
   const lineLimit = validateInteger(maxLines, `${toolName} maxLines`, 10, 500);
   const byteLimit = validateInteger(maxBytes, `${toolName} maxBytes`, 1024, MAX_BYTES);
   const timeoutLimit = validateInteger(timeoutMs, `${toolName} timeoutMs`, MIN_COMMAND_TIMEOUT_MS, MAX_COMMAND_TIMEOUT_MS);
+  validateCommandPolicy(command, toolName);
 
   const result = await runCommandResult(command, { timeout: timeoutLimit });
   const outputText = combinedCommandOutput(result);

@@ -4,7 +4,7 @@ import { DEFAULT_BYTES, MAX_BYTES, MAX_LINES, MAX_READ_BYTES } from "../constant
 import { decodeUtf8, formatOutput } from "../output.js";
 import { runProcess, runProcessLines } from "../process.js";
 import { recordStats } from "../stats.js";
-import { formatTruncationReason, invalidParams, omission, relativePath, savingsMeta, toolTextResult, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
+import { assertPathAllowed, formatTruncationReason, invalidParams, omission, relativePath, savingsMeta, toolTextResult, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage", ".pi", ".opencode", ".cache"]);
 const GIT_CHECK_IGNORE_CHUNK_SIZE = 100;
@@ -28,6 +28,7 @@ async function filesMode(args) {
   const fileLimit = validateInteger(maxFiles, "discover maxFiles", 1, 5000);
   const lineLimit = validateInteger(maxLines, "discover maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "discover maxBytes", 1024, MAX_BYTES);
+  await assertPathAllowed(inputPath, "discover");
 
   const started = Date.now();
   let matcher;
@@ -124,6 +125,7 @@ async function treeMode(args) {
   const entryLimit = validateInteger(maxEntries, "discover maxEntries", 1, 2000);
   const lineLimit = validateInteger(maxLines, "discover maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "discover maxBytes", 1024, MAX_BYTES);
+  await assertPathAllowed(inputPath, "discover");
 
   const started = Date.now();
   const root = path.resolve(inputPath);
@@ -268,6 +270,7 @@ async function summaryMode(args) {
   const { maxLines = MAX_LINES, maxBytes = DEFAULT_BYTES } = args ?? {};
   const lineLimit = validateInteger(maxLines, "discover maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "discover maxBytes", 1024, MAX_BYTES);
+  await assertPathAllowed(process.cwd(), "discover");
   const started = Date.now();
   const root = process.cwd();
   const lines = [`Project: ${relativePath(root)}`];
@@ -355,6 +358,7 @@ async function outlineMode(args) {
   const lineLimit = validateInteger(maxLines, "discover maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "discover maxBytes", 1024, MAX_BYTES);
   const resolved = path.resolve(filePath);
+  await assertPathAllowed(resolved, "discover");
   const stat = await fs.promises.stat(resolved);
   if (!stat.isFile()) invalidParams(`Not a file: ${filePath}`);
   if (stat.size > MAX_READ_BYTES) invalidParams(`File is too large for outline: ${filePath}`);

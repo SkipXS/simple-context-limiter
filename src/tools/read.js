@@ -4,7 +4,7 @@ import { StringDecoder } from "node:string_decoder";
 import { DEFAULT_BYTES, MAX_BYTES, MAX_LINES, MAX_READ_BYTES, READ_RANGE_TIMEOUT_MS } from "../constants.js";
 import { decodeUtf8, formatOutput } from "../output.js";
 import { recordStats } from "../stats.js";
-import { formatTruncationReason, invalidParams, omission, omitUndefined, relativePath, savingsForText, toolTextResult, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
+import { assertPathAllowed, formatTruncationReason, invalidParams, omission, omitUndefined, relativePath, savingsForText, toolTextResult, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 const READ_MANY_CONCURRENCY = 4;
 
@@ -141,6 +141,7 @@ async function readFilePreview(args, toolName) {
   if (typeof lineNumbers !== "boolean") invalidParams(`${toolName} lineNumbers must be a boolean when provided`);
 
   const resolved = path.resolve(filePath);
+  await assertPathAllowed(resolved, toolName);
   const stat = await fs.promises.stat(resolved);
   if (!stat.isFile()) {
     const error = new Error(`Not a file: ${filePath}`);

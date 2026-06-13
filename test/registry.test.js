@@ -28,6 +28,29 @@ await describe("tool registry", async () => {
     );
   });
 
+  await it("rejects schema type, range, enum, and required argument drift before executing tools", async () => {
+    await assert.rejects(
+      () => callTool("sc-run", {}),
+      /Missing required argument for sc-run: command/,
+    );
+    await assert.rejects(
+      () => callTool("sc-run", { command: "echo should-not-run", maxLines: 9 }),
+      /run maxLines must be between 10 and 500/,
+    );
+    await assert.rejects(
+      () => callTool("sc-fetch", { url: "http://example.test", cache: "no" }),
+      /fetch cache must be a boolean/,
+    );
+    await assert.rejects(
+      () => callTool("sc-diff", { mode: "patch" }),
+      /diff mode must be one of: diff, status, history/,
+    );
+    await assert.rejects(
+      () => callTool("sc-read", { paths: [] }),
+      /sc-read paths must contain at least 1 item/,
+    );
+  });
+
   await it("rejects unknown prefixed tool names", async () => {
     await assert.rejects(
       () => callTool("sc-missing", {}),

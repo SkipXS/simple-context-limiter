@@ -28,6 +28,9 @@ await describe("server backpressure", async () => {
       send(server, { jsonrpc: "2.0", id: "init", method: "initialize", params: { protocolVersion: "2024-11-05" } });
       await waitForResponse(stdoutLines, "init");
       send(server, { jsonrpc: "2.0", method: "notifications/initialized" });
+      send(server, { jsonrpc: "2.0", id: "ready-barrier", method: "tools/list" });
+      const ready = await waitForResponse(stdoutLines, "ready-barrier", 2_000);
+      assert.ok(ready.result?.tools?.length > 0, `server did not initialize: ${JSON.stringify(ready)}`);
 
       send(server, {
         jsonrpc: "2.0",

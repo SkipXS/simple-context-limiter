@@ -317,15 +317,62 @@ function suggestedPrefixedToolName(name) {
   return typeof name === "string" && Object.hasOwn(handlers, name) ? `${TOOL_PREFIX}${name}` : undefined;
 }
 
-function validateKnownArgs(name, args) {
-  if (!args || typeof args !== "object" || Array.isArray(args)) return;
-  const allowed = new Set(Object.keys(inputSchemas.get(name)?.properties ?? {}));
-  const unknown = Object.keys(args).find((key) => !allowed.has(key));
-  if (!unknown) return;
-
-  const error = new Error(`Unknown argument for ${name}: ${unknown}`);
+function invalidToolParams(message) {
+  const error = new Error(message);
   error.code = -32602;
   throw error;
+}
+
+function validateSchemaArgs(name, args) {
+  const schema = inputSchemas.get(name);
+  if (!schema) return;
+
+  const input = args ?? {};
+  if (typeof input !== "object" || Array.isArray(input)) invalidToolParams(`${name} arguments must be an object`);
+
+  const properties = schema.properties ?? {};
+  const allowed = new Set(Object.keys(properties));
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) invalidToolParams(`Unknown argument for ${name}: ${unknown}`);
+
+  for (const required of schema.required ?? []) {
+    if (input[required] === undefined) invalidToolParams(`Missing required argument for ${name}: ${required}`);
+  }
+
+  for (const [key, value] of Object.entries(input)) {
+    validateSchemaValue(name, key, value, properties[key]);
+  }
+}
+
+function validateSchemaValue(toolName, key, value, schema) {
+  if (!schema || value === undefined) return;
+
+  if (schema.type === "integer") {
+    const label = schemaLabel(toolName, key);
+    const range = schema.maximum === undefined ? `>= ${schema.minimum}` : `between ${schema.minimum} and ${schema.maximum}`;
+    if (typeof value !== "number" || !Number.isInteger(value)) invalidToolParams(`${label} must be an integer ${range}`);
+    if (schema.minimum !== undefined && value < schema.minimum) invalidToolParams(`${label} must be ${range}`);
+    if (schema.maximum !== undefined && value > schema.maximum) invalidToolParams(`${label} must be ${range}`);
+    return;
+  }
+
+  if (schema.type === "array") {
+    if (!Array.isArray(value)) invalidToolParams(`${toolName} ${key} must be an array`);
+    if (schema.minItems !== undefined && value.length < schema.minItems) invalidToolParams(`${toolName} ${key} must contain at least ${schema.minItems} item(s)`);
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) invalidToolParams(`${toolName} ${key} must contain at most ${schema.maxItems} item(s)`);
+    if (schema.items) {
+      for (const [index, item] of value.entries()) validateSchemaValue(toolName, `${key}[${index}]`, item, schema.items);
+    }
+    return;
+  }
+
+  if (schema.type && typeof value !== schema.type) invalidToolParams(`${schemaLabel(toolName, key)} must be a ${schema.type}`);
+  if (schema.enum && !schema.enum.includes(value)) invalidToolParams(`${schemaLabel(toolName, key)} must be one of: ${schema.enum.join(", ")}`);
+}
+
+function schemaLabel(toolName, key) {
+  const bareToolName = toolName.startsWith(TOOL_PREFIX) ? toolName.slice(TOOL_PREFIX.length) : toolName;
+  return `${bareToolName} ${key}`;
 }
 
 export async function callTool(name, args) {
@@ -337,7 +384,7 @@ export async function callTool(name, args) {
   try {
     const handler = internalName ? handlers[internalName] : undefined;
     if (handler) {
-      validateKnownArgs(name, args);
+      validateSchemaArgs(name, args);
       result = await handler(args);
       return result;
     }

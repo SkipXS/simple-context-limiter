@@ -2,7 +2,7 @@ import { DEFAULT_COMMAND_TIMEOUT_MS, DEFAULT_BYTES, MAX_BYTES, MAX_COMMAND_BYTES
 import { formatOutput } from "../output.js";
 import { runCommand } from "../process.js";
 import { recordStats } from "../stats.js";
-import { formatTruncationReason, invalidParams, toolTextResult, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
+import { formatTruncationReason, invalidParams, toolTextResult, truncationMeta, validateCommandPolicy, validateInteger, withResponseMeta } from "./shared.js";
 
 export async function runTool(args) {
   const { command, maxLines = MAX_LINES, maxBytes = DEFAULT_BYTES, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS } = args ?? {};
@@ -12,6 +12,7 @@ export async function runTool(args) {
   const lineLimit = validateInteger(maxLines, "run maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "run maxBytes", 1024, MAX_BYTES);
   const timeoutLimit = validateInteger(timeoutMs, "run timeoutMs", MIN_COMMAND_TIMEOUT_MS, MAX_COMMAND_TIMEOUT_MS);
+  validateCommandPolicy(command, "run");
 
   const { stdout, stderrBytes = 0, durationMs, outputTooLarge, code, signal } = await runCommand(command, { timeout: timeoutLimit, allowOutputTooLarge: true });
   const formatted = formatOutput(stdout, lineLimit, byteLimit);

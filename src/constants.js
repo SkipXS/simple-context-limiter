@@ -26,6 +26,10 @@ export const CACHE_MAX_BYTES = normalizeByteLimit(process.env.SIMPLE_CONTEXT_LIM
 export const USAGE_LOG_MAX_BYTES = normalizeByteLimit(process.env.SIMPLE_CONTEXT_LIMITER_USAGE_LOG_MAX_BYTES, 10 * 1024 * 1024);
 export const CACHE_TTL_MS = 3_600_000;
 export const ALLOW_NON_HTTP_FETCH = /^(1|true|yes)$/i.test(process.env.SIMPLE_CONTEXT_LIMITER_ALLOW_NON_HTTP_FETCH ?? "");
+export const DISABLE_COMMAND_TOOLS = envFlag("SIMPLE_CONTEXT_LIMITER_DISABLE_COMMAND_TOOLS") || envFlag("SIMPLE_CONTEXT_LIMITER_DISABLE_RUN");
+export const COMMAND_ALLOWLIST = envList(process.env.SIMPLE_CONTEXT_LIMITER_COMMAND_ALLOWLIST);
+export const FETCH_PUBLIC_ONLY = envFlag("SIMPLE_CONTEXT_LIMITER_FETCH_PUBLIC_ONLY");
+export const PATH_ROOTS = envList(process.env.SIMPLE_CONTEXT_LIMITER_PATH_ROOTS).map((entry) => path.resolve(entry));
 
 export const COMMAND_SHELL = process.env.SIMPLE_CONTEXT_LIMITER_SHELL || true;
 export const COMMAND_SHELL_NAME = typeof COMMAND_SHELL === "string"
@@ -83,6 +87,17 @@ export function usageLogEnabled() {
 export function statsEnabled() {
   return !/^(0|false|no|off)$/i.test(process.env.SIMPLE_CONTEXT_LIMITER_STATS ?? "")
     && !/^(1|true|yes|on)$/i.test(process.env.SIMPLE_CONTEXT_LIMITER_DISABLE_STATS ?? "");
+}
+
+function envFlag(name) {
+  return /^(1|true|yes|on)$/i.test(process.env[name] ?? "");
+}
+
+function envList(value) {
+  return String(value ?? "")
+    .split(/[\n,;]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
 export function normalizeByteLimit(value, fallback) {

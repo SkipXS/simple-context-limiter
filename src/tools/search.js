@@ -5,7 +5,7 @@ import { DEFAULT_BYTES, MAX_BYTES, MAX_LINES, MAX_READ_BYTES, RG_NAME } from "..
 import { formatOutput } from "../output.js";
 import { commandError, runProcessLines } from "../process.js";
 import { recordStats } from "../stats.js";
-import { formatTruncationReason, invalidParams, relativePath, savingsForText, savingsMeta, toolTextResult, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
+import { assertPathAllowed, formatTruncationReason, invalidParams, relativePath, savingsForText, savingsMeta, toolTextResult, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 const MATCH_SEPARATOR = "\x1f";
 const CONTEXT_SEPARATOR = "\x1e";
@@ -154,6 +154,7 @@ export async function searchTool(args) {
   const limit = validateInteger(maxMatches, "search maxMatches", 1, 1000);
   const lineLimit = validateInteger(maxLines, "search maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "search maxBytes", 1024, MAX_BYTES);
+  await assertPathAllowed(searchPath, "search");
 
   const commandSearchPath = relativePath(searchPath);
 

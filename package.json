@@ -31,13 +31,14 @@
   "scripts": {
     "check": "node check-syntax.js && npm run test:unit && node scripts/output-quality-check.js",
     "quality": "node scripts/output-quality-check.js",
+    "coverage": "node --test --experimental-test-coverage test/*.test.js",
     "test": "npm run test:unit && npm run test:smoke",
     "test:unit": "node --test test/*.test.js",
     "test:smoke": "node smoke-test.js",
     "audit": "npm audit --omit=dev",
     "release:check": "npm pack --dry-run --ignore-scripts && node pack-smoke-test.js",
-    "prepack": "npm run check",
-    "prepublishOnly": "npm run release:check"
+    "prepack": "node check-syntax.js",
+    "prepublishOnly": "npm run check && npm run release:check"
   },
   "bin": { "simple-context-limiter": "server.js" },
   "license": "MIT"

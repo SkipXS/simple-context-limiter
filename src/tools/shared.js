@@ -1,4 +1,6 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
+import { COMMAND_ALLOWLIST, DISABLE_COMMAND_TOOLS, PATH_ROOTS } from "../constants.js";
 
 export function invalidParams(message) {
   const error = new Error(message);
@@ -88,6 +90,38 @@ export function withResponseMeta(meta) {
     if (!RESPONSE_META_KEYS.has(key)) compact[key] = value;
   }
   return { ...compact, response: responseMeta(meta) };
+}
+
+export function validateCommandPolicy(command, toolName) {
+  if (DISABLE_COMMAND_TOOLS) invalidParams(`${toolName} is disabled by SIMPLE_CONTEXT_LIMITER_DISABLE_COMMAND_TOOLS`);
+  if (COMMAND_ALLOWLIST.length === 0) return;
+
+  const allowed = COMMAND_ALLOWLIST.includes(command);
+  if (!allowed) invalidParams(`${toolName} command is not allowed by SIMPLE_CONTEXT_LIMITER_COMMAND_ALLOWLIST`);
+}
+
+export async function assertPathAllowed(filePath, toolName) {
+  if (PATH_ROOTS.length === 0) return;
+
+  const resolved = path.resolve(filePath);
+  const candidate = await realPathForPolicy(resolved);
+  const allowed = await Promise.all(PATH_ROOTS.map(async (root) => isInsidePath(candidate, await realPathForPolicy(root))));
+  if (allowed.some(Boolean)) return;
+
+  invalidParams(`${toolName} path is outside SIMPLE_CONTEXT_LIMITER_PATH_ROOTS: ${filePath}`);
+}
+
+async function realPathForPolicy(filePath) {
+  try {
+    return await fs.promises.realpath(filePath);
+  } catch {
+    return path.resolve(filePath);
+  }
+}
+
+function isInsidePath(candidate, root) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 export function relativePath(filePath, root = process.cwd()) {

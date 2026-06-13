@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { projectKey, usageLogEnabled, USAGE_LOG_FILE, USAGE_LOG_MAX_BYTES } from "./constants.js";
-import { withFileLock } from "./storage.js";
+import { chmodPrivateFile, ensurePrivateDir, PRIVATE_FILE_MODE, withFileLock } from "./storage.js";
 
 const MAX_REPORT_EVENTS = 10_000;
 const REPORT_READ_BYTES = 5 * 1024 * 1024;
@@ -32,9 +32,10 @@ export function recordUsage(toolName, args, result, error, durationMs) {
 
   usageWrite = usageWrite.catch(() => {}).then(async () => {
     try {
-      await fs.promises.mkdir(path.dirname(USAGE_LOG_FILE), { recursive: true });
+      await ensurePrivateDir(path.dirname(USAGE_LOG_FILE));
       await withFileLock(USAGE_LOG_FILE, async () => {
-        await fs.promises.appendFile(USAGE_LOG_FILE, `${JSON.stringify(event)}\n`, "utf8");
+        await fs.promises.appendFile(USAGE_LOG_FILE, `${JSON.stringify(event)}\n`, { encoding: "utf8", mode: PRIVATE_FILE_MODE });
+        await chmodPrivateFile(USAGE_LOG_FILE);
         await pruneUsageLogIfNeeded();
       });
     } catch {
@@ -59,7 +60,8 @@ async function pruneUsageLogIfNeeded() {
   }
 
   text = completeJsonLines(text);
-  await fs.promises.writeFile(USAGE_LOG_FILE, text, "utf8");
+  await fs.promises.writeFile(USAGE_LOG_FILE, text, { encoding: "utf8", mode: PRIVATE_FILE_MODE });
+  await chmodPrivateFile(USAGE_LOG_FILE);
 }
 
 function completeJsonLines(text) {

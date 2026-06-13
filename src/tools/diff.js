@@ -1,10 +1,9 @@
-import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { DEFAULT_BYTES, MAX_BYTES, MAX_LINES } from "../constants.js";
 import { formatOutput } from "../output.js";
-import { commandError, runProcess } from "../process.js";
+import { commandError, runProcess, spawnTrackedProcess, terminateChild } from "../process.js";
 import { recordStats } from "../stats.js";
-import { formatTruncationReason, invalidParams, omission, relativePath, savingsForText, toolTextResult, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
+import { assertPathAllowed, formatTruncationReason, invalidParams, omission, relativePath, savingsForText, toolTextResult, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 export async function diffTool(args) {
   const {
@@ -37,6 +36,7 @@ export async function diffTool(args) {
   const hunkLimit = validateInteger(maxHunks, "diff maxHunks", 1, 200);
   const lineLimit = validateInteger(maxLines, "diff maxLines", 10, 500);
   const byteLimit = validateInteger(maxBytes, "diff maxBytes", 1024, MAX_BYTES);
+  await assertPathAllowed(normalizedDiffPath ?? process.cwd(), "diff");
 
   if (mode === "status") return await statusTool(normalizedDiffPath, staged, lineLimit, byteLimit);
   if (mode === "history") return await historyTool(normalizedDiffPath, commitLimit, lineLimit, byteLimit);
@@ -191,7 +191,7 @@ async function runGit(args) {
 
 async function runGitNamePreview(args, maxNames) {
   return await new Promise((resolve, reject) => {
-    const child = spawn("git", args, {
+    const child = spawnTrackedProcess("git", args, {
       cwd: process.cwd(),
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
@@ -206,18 +206,12 @@ async function runGitNamePreview(args, maxNames) {
     let limited = false;
     let timedOut = false;
     let stoppedEarly = false;
+    let stopPromise = Promise.resolve();
 
     function stopEarly() {
       if (stoppedEarly) return;
       stoppedEarly = true;
-      if (process.platform === "win32") child.kill();
-      else {
-        try {
-          process.kill(-child.pid, "SIGTERM");
-        } catch {
-          child.kill("SIGTERM");
-        }
-      }
+      stopPromise = terminateChild(child);
     }
 
     function handleLine(line) {
@@ -261,8 +255,9 @@ async function runGitNamePreview(args, maxNames) {
       clearTimeout(timer);
       reject(error);
     });
-    child.on("close", (code, signal) => {
+    child.on("close", async (code, signal) => {
       clearTimeout(timer);
+      await stopPromise.catch(() => {});
       if (!stoppedEarly) {
         pendingLine += decoder.end();
         if (pendingLine) handleLine(pendingLine);
@@ -282,7 +277,7 @@ async function runGitNamePreview(args, maxNames) {
 
 async function runGitDiffPreview(args, maxHunks, maxOutputLines, maxOutputBytes) {
   return await new Promise((resolve, reject) => {
-    const child = spawn("git", args, {
+    const child = spawnTrackedProcess("git", args, {
       cwd: process.cwd(),
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
@@ -301,18 +296,12 @@ async function runGitDiffPreview(args, maxHunks, maxOutputLines, maxOutputBytes)
     let outputBytes = 0;
     let timedOut = false;
     let stoppedEarly = false;
+    let stopPromise = Promise.resolve();
 
     function stopEarly() {
       if (stoppedEarly) return;
       stoppedEarly = true;
-      if (process.platform === "win32") child.kill();
-      else {
-        try {
-          process.kill(-child.pid, "SIGTERM");
-        } catch {
-          child.kill("SIGTERM");
-        }
-      }
+      stopPromise = terminateChild(child);
     }
 
     function pushOutput(line) {
@@ -374,8 +363,9 @@ async function runGitDiffPreview(args, maxHunks, maxOutputLines, maxOutputBytes)
       clearTimeout(timer);
       reject(error);
     });
-    child.on("close", (code, signal) => {
+    child.on("close", async (code, signal) => {
       clearTimeout(timer);
+      await stopPromise.catch(() => {});
       if (!stoppedEarly) {
         pendingLine += decoder.end();
         if (pendingLine) handleLine(pendingLine);

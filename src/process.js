@@ -15,6 +15,12 @@ function trackChild(child) {
   return child;
 }
 
+export function spawnTrackedProcess(file, argsOrOptions, options) {
+  return Array.isArray(argsOrOptions)
+    ? trackChild(spawn(file, argsOrOptions, options ?? {}))
+    : trackChild(spawn(file, argsOrOptions ?? {}));
+}
+
 export async function terminateActiveChildren() {
   await Promise.allSettled([...activeChildren].map((child) => terminateChild(child)));
 }
@@ -52,7 +58,7 @@ function escapeWindowsCmdArg(value) {
   return String(value).replace(/[()%!^"<>&|]/g, "^$&");
 }
 
-function terminateChild(child) {
+export function terminateChild(child) {
   if (!child.pid) {
     child.kill();
     return Promise.resolve();
@@ -62,7 +68,6 @@ function terminateChild(child) {
     return new Promise((resolve) => {
       let settled = false;
       const timer = setTimeout(() => done(true), 1_000);
-      timer.unref();
       const done = (fallback) => {
         if (settled) return;
         settled = true;
@@ -76,7 +81,6 @@ function terminateChild(child) {
       });
       killer.on("error", () => done(true));
       killer.on("close", (code) => done(code !== 0));
-      killer.unref();
     });
   }
 
@@ -94,6 +98,9 @@ function terminateChild(child) {
     }
   }, 1_000);
   force.unref();
+  const clearForce = () => clearTimeout(force);
+  child.once("close", clearForce);
+  child.once("error", clearForce);
   return Promise.resolve();
 }
 
@@ -119,10 +126,10 @@ export function commandErrorData(error) {
 
 export function commandError(command, code, signal, stdout, stderr, timedOut = false, outputTooLarge = false, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS) {
   const detail = outputTooLarge
-    ? `output exceeded ${MAX_COMMAND_BYTES} bytes`
+    ? `output exceeded ${MAX_COMMAND_BYTES} bytes${exitDetailSuffix(code, signal)}`
     : timedOut
-      ? `timed out after ${timeoutMs}ms`
-      : `exited with code ${code}`;
+      ? `timed out after ${timeoutMs}ms${exitDetailSuffix(code, signal)}`
+      : exitDetail(code, signal) || `exited with code ${code}`;
   const error = new Error(`Command failed: ${command} (${detail})`);
 
   error.status = code;
@@ -133,6 +140,17 @@ export function commandError(command, code, signal, stdout, stderr, timedOut = f
   error.outputTooLarge = outputTooLarge;
   error.timeoutMs = timeoutMs;
   throw error;
+}
+
+function exitDetail(code, signal) {
+  if (signal) return `terminated by signal ${signal}`;
+  if (code !== null && code !== undefined) return `exited with code ${code}`;
+  return "";
+}
+
+function exitDetailSuffix(code, signal) {
+  const detail = exitDetail(code, signal);
+  return detail ? `; ${detail}` : "";
 }
 
 export function errorData(error) {
@@ -187,14 +205,14 @@ export async function runProcess(file, args, options = {}) {
   return await new Promise((resolve, reject) => {
     const started = Date.now();
     const target = spawnTarget(file, args, options);
-    const child = trackChild(spawn(target.file, target.args, {
+    const child = spawnTrackedProcess(target.file, target.args, {
       cwd: options.cwd,
       env: options.env,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
       detached: process.platform !== "win32",
-    }));
+    });
 
     const stdout = [];
     const stderr = [];
@@ -228,12 +246,12 @@ export async function runProcess(file, args, options = {}) {
 export async function runCommandResult(command, options = {}) {
   return await new Promise((resolve, reject) => {
     const started = Date.now();
-    const child = trackChild(spawn(command, {
+    const child = spawnTrackedProcess(command, {
       shell: COMMAND_SHELL,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
       detached: process.platform !== "win32",
-    }));
+    });
 
     const stdout = [];
     const stderr = [];
@@ -274,7 +292,7 @@ export async function runCommandResult(command, options = {}) {
 
 export async function runCommand(command, options = {}) {
   const result = await runCommandResult(command, options);
-  if (options.allowOutputTooLarge && result.outputTooLarge && !result.timedOut && result.stdout) {
+  if (options.allowOutputTooLarge && result.outputTooLarge && !result.timedOut && result.code === 0 && !result.signal && result.stdout) {
     return {
       stdout: result.stdout,
       stderrBytes: result.stderrBytes,
@@ -304,13 +322,13 @@ export async function runProcessLines(file, args, options = {}) {
   return await new Promise((resolve, reject) => {
     const started = Date.now();
     const target = spawnTarget(file, args, options);
-    const child = trackChild(spawn(target.file, target.args, {
+    const child = spawnTrackedProcess(target.file, target.args, {
       cwd: options.cwd,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
       detached: process.platform !== "win32",
-    }));
+    });
 
     const maxLines = options.maxLines ?? 100;
     const maxBytes = options.maxBytes ?? MAX_COMMAND_BYTES;
