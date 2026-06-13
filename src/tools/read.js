@@ -4,16 +4,20 @@ import { StringDecoder } from "node:string_decoder";
 import { MAX_BYTES, MAX_LINES, MAX_READ_BYTES, READ_RANGE_TIMEOUT_MS } from "../constants.js";
 import { decodeUtf8, formatOutput } from "../output.js";
 import { recordStats } from "../stats.js";
-import { formatTruncationReason, invalidParams, omission, omitUndefined, relativePath, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
+import { formatTruncationReason, invalidParams, omission, omitUndefined, relativePath, savingsForText, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 const READ_MANY_CONCURRENCY = 4;
 
 export async function readTool(args) {
-  if ((args ?? {}).paths !== undefined) {
-    return await readManyTool({ ...args, paths: normalizeReadPaths(args) }, "read");
+  const options = args ?? {};
+  if (options.path === undefined && options.paths === undefined) {
+    invalidParams("read requires path or paths");
+  }
+  if (options.paths !== undefined) {
+    return await readManyTool({ ...options, paths: normalizeReadPaths(options) }, "read");
   }
 
-  const result = await readFilePreview(args, "read");
+  const result = await readFilePreview(options, "read");
   await recordStats("read", result._meta);
 
   return result;
@@ -91,10 +95,7 @@ export async function readManyTool(args, toolName = "read") {
 
   const results = await mapLimited(previewArgsList, READ_MANY_CONCURRENCY, (previewArgs) => readFilePreview(previewArgs, toolName));
 
-  const combined = results
-    .map((result) => `--- ${result._meta.relativePath ?? result._meta.path} ---\n${result.content[0].text}`)
-    .join("\n\n");
-  const formatted = formatOutput(combined, totalLineLimit, totalLimit);
+  const formatted = formatReadManyOutput(results, totalLineLimit, totalLimit);
   const totalBytes = results.reduce((sum, result) => sum + result._meta.response.totalBytes, 0);
   const contextSavings = savingsForReturnedBytes(totalBytes, formatted.returnedBytes);
   const truncated = formatted.truncated || results.some((result) => result._meta.truncated);
@@ -214,6 +215,139 @@ function readManyTruncationReason(formatted, maxLines, maxBytes, results) {
   return formatTruncationReason(formatted, maxLines, maxBytes)
     ?? results.find((result) => result._meta.truncated)?._meta.truncation?.reason
     ?? "file_limit";
+}
+
+function formatReadManyOutput(results, maxLines, maxBytes) {
+  const sections = results.map(readManyOutputSection);
+  const combined = sections.map((section) => [section.header, section.text].join("\n")).join("\n\n");
+  const formatted = formatOutput(combined, maxLines, maxBytes);
+  if (!formatted.truncated) return formatted;
+
+  const text = trimReadManySummaryToBytes(buildReadManySummary(sections, formatted.totalLines, formatted.totalBytes, maxLines), maxBytes);
+  const savings = savingsForText(combined, text);
+
+  return {
+    text,
+    totalLines: formatted.totalLines,
+    totalBytes: formatted.totalBytes,
+    returnedBytes: savings.returnedBytes,
+    savedBytes: savings.savedBytes,
+    savedPercent: savings.savedPercent,
+    estimatedTokensSaved: savings.estimatedTokensSaved,
+    truncated: true,
+  };
+}
+
+function readManyOutputSection(result) {
+  const name = result._meta.relativePath ?? result._meta.path;
+  return {
+    name,
+    header: `--- ${name} ---`,
+    text: result.content[0].text,
+    contentLines: result.content[0].text.split("\n"),
+  };
+}
+
+function buildReadManySummary(sections, totalLines, totalBytes, maxLines) {
+  const markerLines = 2;
+  const available = Math.max(2, maxLines - markerLines);
+  const headBudget = Math.max(1, Math.floor(available * 0.4));
+  const tailBudget = Math.max(1, available - headBudget);
+  const head = takeReadManyHead(sections, headBudget);
+  const tail = takeReadManyTail(sections, tailBudget);
+
+  return [
+    `[truncated: ${totalLines} lines, ${(totalBytes / 1024).toFixed(1)} KB; showing file-bounded first ${head.length} + last ${tail.length}]`,
+    ...head,
+    "[omitted: middle file content]",
+    ...tail,
+  ].join("\n");
+}
+
+function takeReadManyHead(sections, budget) {
+  const output = [];
+  let remaining = budget;
+  for (const section of sections) {
+    if (remaining <= 0) break;
+    const sectionLines = [section.header, ...section.contentLines];
+    if (sectionLines.length <= remaining) {
+      output.push(...sectionLines);
+      remaining -= sectionLines.length;
+      continue;
+    }
+
+    output.push(section.header);
+    remaining--;
+    if (remaining > 1) {
+      const shownContentLines = remaining - 1;
+      output.push(...section.contentLines.slice(0, shownContentLines));
+      output.push(`[omitted: more lines from ${section.name}]`);
+    } else if (remaining === 1) {
+      output.push(...section.contentLines.slice(0, 1));
+    }
+    break;
+  }
+  return output;
+}
+
+function takeReadManyTail(sections, budget) {
+  const output = [];
+  let remaining = budget;
+  for (let index = sections.length - 1; index >= 0; index--) {
+    if (remaining <= 0) break;
+    const section = sections[index];
+    const sectionLines = [section.header, ...section.contentLines];
+    if (sectionLines.length <= remaining) {
+      output.unshift(...sectionLines);
+      remaining -= sectionLines.length;
+      continue;
+    }
+
+    const partial = [section.header];
+    remaining--;
+    if (remaining > 1) {
+      const shownContentLines = remaining - 1;
+      partial.push(`[omitted: earlier lines from ${section.name}]`);
+      partial.push(...section.contentLines.slice(-shownContentLines));
+    } else if (remaining === 1) {
+      partial.push(...section.contentLines.slice(-1));
+    }
+    output.unshift(...partial);
+    break;
+  }
+  return output;
+}
+
+function trimReadManySummaryToBytes(text, maxBytes) {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  const lines = text.split("\n");
+
+  for (let attempts = 0; attempts < 64 && Buffer.byteLength(lines.join("\n"), "utf8") > maxBytes; attempts++) {
+    const longestIndex = longestContentLineIndex(lines);
+    if (longestIndex === -1) break;
+    const line = lines[longestIndex];
+    const clippedBytes = Math.max(0, Math.floor(Buffer.byteLength(line, "utf8") * 0.6));
+    const clipped = decodeUtf8(Buffer.from(line, "utf8").subarray(0, clippedBytes), { trimEnd: true });
+    lines[longestIndex] = clipped ? `${clipped}…` : "…";
+  }
+
+  const trimmed = lines.join("\n");
+  if (Buffer.byteLength(trimmed, "utf8") <= maxBytes) return trimmed;
+  return decodeUtf8(Buffer.from(trimmed, "utf8").subarray(0, maxBytes), { trimEnd: true });
+}
+
+function longestContentLineIndex(lines) {
+  let bestIndex = -1;
+  let bestBytes = 0;
+  for (const [index, line] of lines.entries()) {
+    if (line.startsWith("--- ") || line.startsWith("[")) continue;
+    const bytes = Buffer.byteLength(line, "utf8");
+    if (bytes > bestBytes) {
+      bestBytes = bytes;
+      bestIndex = index;
+    }
+  }
+  return bestIndex;
 }
 
 function readManyFileMeta(result) {

@@ -657,10 +657,12 @@ try {
   assert.equal(logs.result._meta.exitCode, 7);
   assert.equal(logs.result._meta.blocksFound, 1);
   assert.equal(logs.result._meta.blocksShown, 1);
+  assert.equal(logs.result._meta.blockOrder, "severity_then_line");
   assert.equal(logs.result._meta.fallback, false);
   assert.equal(logs.result._meta.shell, COMMAND_SHELL_NAME);
   assert.equal(logs.result._meta.timeoutMs, 120_000);
   assert.match(logs.result.content[0].text, /Command exit 7/);
+  assert.match(logs.result.content[0].text, /Blocks sorted by severity, then line/);
   assert.match(logs.result.content[0].text, /AssertionError/);
   assert.match(logs.result.content[0].text, /at test\.js:10:5/);
   assert.doesNotMatch(logs.result.content[0].text, /line 0/);
@@ -833,6 +835,13 @@ try {
   assert.equal(invalidNumberedPreview.error.code, -32602);
   assert.match(invalidNumberedPreview.error.message, /lineNumbers requires/);
 
+  const missingReadPath = await request("tools/call", {
+    name: "read",
+    arguments: {},
+  });
+  assert.equal(missingReadPath.error.code, -32602);
+  assert.match(missingReadPath.error.message, /requires path or paths/);
+
   const readMany = await request("tools/call", {
     name: "read",
     arguments: { paths: [largeFile, dashFile], maxLinesPerFile: 20, maxTotalBytes: 4096 },
@@ -849,6 +858,15 @@ try {
   assert.match(readMany.result.content[0].text, /large\.txt/);
   assert.match(readMany.result.content[0].text, /dash\.txt/);
   assert.match(readMany.result.content[0].text, /-needle/);
+
+  const boundaryTruncatedReadMany = await request("tools/call", {
+    name: "read",
+    arguments: { paths: [largeFile, dashFile], maxLinesPerFile: 20, maxTotalLines: 10, maxTotalBytes: 4096 },
+  });
+  const boundaryText = boundaryTruncatedReadMany.result.content[0].text;
+  assert.match(boundaryText, /file-bounded/);
+  assert.ok(boundaryText.lastIndexOf("---") < boundaryText.indexOf("-needle") || boundaryText.lastIndexOf("---", boundaryText.indexOf("-needle")) >= 0);
+  assert.match(boundaryText, /--- .*dash\.txt ---[\s\S]*-needle/);
 
   const readManyMaxFallback = await request("tools/call", {
     name: "read",

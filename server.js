@@ -148,7 +148,7 @@ async function runToolCallLimited(fn) {
 
 const instructions = "Prefer these bounded tools to keep context small: run for shell stdout, logs for tests/builds/lints/logs, read for file previews, search for local text/AST search, discover before broad repo reads, fetch for readable web pages, diff for git status/diff/history, and usage for savings/guidance. "
   + "Use native client tools only when you need complete output, exact stderr/exit semantics, interactivity, raw HTML, or unsupported behavior. "
-  + "After each call, check _meta.truncated or _meta.response.truncated; if true, retry with a narrower query/path/range or higher maxLines/maxBytes before falling back.";
+  + "After each call, check _meta.truncated; if true, use _meta.truncation.reason/retryHint and retry with a narrower query/path/range or higher maxLines/maxBytes before falling back.";
 
 let initializeAccepted = false;
 let sessionInitialized = false;

@@ -54,6 +54,7 @@ export async function logsResult(args, toolName) {
     shell: COMMAND_SHELL_NAME,
     blocksFound: extraction.blocksFound,
     blocksShown: extraction.blocksShown,
+    blockOrder: extraction.fallback ? undefined : "severity_then_line",
     fallback: extraction.fallback,
   });
   await recordStats(toolName, meta);
@@ -117,7 +118,7 @@ function extractLogBlocks(text, maxBlocks, contextLines, maxLines) {
   })));
   const prioritizedRanges = prioritizeLogRanges(ranges);
   const shownRanges = prioritizedRanges.slice(0, maxBlocks);
-  const output = [];
+  const output = ["Blocks sorted by severity, then line."];
 
   for (const [rangeIndex, range] of shownRanges.entries()) {
     if (rangeIndex > 0) output.push("---");

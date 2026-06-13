@@ -44,7 +44,7 @@ export const tools = {
     {
       name: "logs",
       description:
-        "Run a local shell command and extract stderr/error/warning blocks from combined output. Use for test/build diagnostics; non-zero exits return normal tool results with exit metadata.",
+        "Run a local shell command and extract stderr/error/warning blocks from combined output. Blocks are sorted by severity, then line. Non-zero exits return normal tool results with exit metadata.",
       inputSchema: {
         type: "object",
         properties: {
@@ -86,17 +86,17 @@ export const tools = {
     {
       name: "read",
       description:
-        "Read one or more local UTF-8 text files and return bounded previews. Provide path or paths; use path when requesting fromLine/toLine ranges.",
+        "Read one or more local UTF-8 text files and return bounded previews. Requires path or paths. Use path to identify the ranged file when requesting fromLine/toLine.",
       inputSchema: {
         type: "object",
         properties: {
-          path: { type: "string", description: "Single file path to read. Use this, not paths, for fromLine/toLine range reads. If paths is also provided with a range, the range applies only to this path." },
+          path: { type: "string", description: "Single file path to read. For fromLine/toLine with multiple files, this identifies the one ranged file." },
           paths: {
             type: "array",
             minItems: 1,
             maxItems: 20,
             items: { type: "string" },
-            description: "Multiple file paths to read. Maximum 20. If path is also provided, it is prepended and duplicates are ignored. For range reads, prefer path with fromLine/toLine; paths may add extra non-ranged files.",
+            description: "Multiple file paths to read. Max 20. If path is also provided, it is prepended and duplicates are ignored. With ranges, paths are extra non-ranged previews.",
           },
           maxLines: {
             type: "integer",
@@ -114,12 +114,12 @@ export const tools = {
           fromLine: {
             type: "integer",
             minimum: 1,
-            description: "First 1-based line to read. Optional. Use with path. Do not use with multiple paths unless path identifies the one ranged file.",
+            description: "First 1-based line to read. Use path to identify the ranged file when multiple files are provided.",
           },
           toLine: {
             type: "integer",
             minimum: 1,
-            description: "Last 1-based line to read. Optional. Use with path. Do not use with multiple paths unless path identifies the one ranged file.",
+            description: "Last 1-based line to read. Use path to identify the ranged file when multiple files are provided.",
           },
           maxLinesPerFile: {
             type: "integer",
