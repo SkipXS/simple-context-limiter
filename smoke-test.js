@@ -21,6 +21,7 @@ const child = spawn(process.execPath, ["server.js"], {
     SIMPLE_CONTEXT_LIMITER_MAX_FETCH_BYTES: "1024",
     SIMPLE_CONTEXT_LIMITER_MAX_READ_BYTES: "2048",
     SIMPLE_CONTEXT_LIMITER_MAX_RPC_BATCH_CONCURRENCY: "2",
+    SIMPLE_CONTEXT_LIMITER_MAX_RPC_TOOL_CONCURRENCY: "2",
     SIMPLE_CONTEXT_LIMITER_MAX_RPC_BATCH_SIZE: "4",
     SIMPLE_CONTEXT_LIMITER_MAX_RPC_LINE_BYTES: "65536",
     SIMPLE_CONTEXT_LIMITER_USAGE_LOG: "0",
@@ -74,7 +75,7 @@ function request(method, params) {
     const timer = setTimeout(() => {
       pending.delete(id);
       reject(new Error(`timed out waiting for ${method}`));
-    }, 2_000);
+    }, 5_000);
 
     pending.set(id, { resolve, reject, timer });
     child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
@@ -109,6 +110,11 @@ function shellQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+function nodeEvalCommand(script) {
+  const command = `${shellQuote(process.execPath)} -e ${JSON.stringify(script)}`;
+  return isPowerShellConfigured() ? `& ${command}` : command;
+}
+
 function configuredShell() {
   return (process.env.SIMPLE_CONTEXT_LIMITER_SHELL ?? "").toLowerCase();
 }
@@ -127,6 +133,11 @@ function assertSavingsMeta(meta) {
   assert.ok(meta.savedBytes >= 0);
   assert.ok(meta.savedPercent >= 0);
   assert.ok(meta.estimatedTokensSaved >= 0);
+  assert.equal(typeof meta.response, "object");
+  assert.equal(typeof meta.response.returnedBytes, "number");
+  assert.equal(typeof meta.response.savedBytes, "number");
+  assert.equal(typeof meta.response.savedPercent, "number");
+  assert.equal(typeof meta.response.estimatedTokensSaved, "number");
 }
 
 function findSchemaKeyword(value, banned, path = "inputSchema") {
@@ -366,6 +377,16 @@ try {
   assert.equal(readSchema.anyOf, undefined);
   assert.match(readSchema.properties.paths.description, /path is also provided/);
 
+  const slowCommand = nodeEvalCommand("setTimeout(() => {}, 500)");
+  const limitedStart = Date.now();
+  const limitedResponses = await Promise.all(Array.from({ length: 4 }, () => request("tools/call", {
+    name: "run",
+    arguments: { command: slowCommand, timeoutMs: 5_000, maxLines: 10 },
+  })));
+  const limitedElapsed = Date.now() - limitedStart;
+  assert.equal(limitedResponses.every((response) => response.result && !response.result.isError), true);
+  assert.ok(limitedElapsed >= 850, `global tool concurrency limit was not enforced: ${limitedElapsed}ms`);
+
   const unknownTool = await request("tools/call", {
     name: "missing",
     arguments: {},
@@ -404,7 +425,7 @@ try {
   });
   assert.equal(fallbackFilesRun.code, 0, fallbackFilesRun.stderr);
   const fallbackFilesPayload = JSON.parse(fallbackFilesRun.stdout.trim());
-  assert.match(fallbackFilesPayload.text, /more files omitted/);
+  assert.match(fallbackFilesPayload.text, /\[omitted: more files\]/);
   assert.equal(fallbackFilesPayload.meta.shownFiles, 3);
   assert.equal(fallbackFilesPayload.meta.totalFilesKnown, false);
   assert.equal(fallbackFilesPayload.meta.truncated, true);
@@ -454,10 +475,10 @@ try {
 
   const outline = await request("tools/call", {
     name: "discover",
-    arguments: { mode: "outline", path: join(import.meta.dirname, "src", "tools", "shared.js"), maxSymbols: 20 },
+    arguments: { mode: "outline", path: join(import.meta.dirname, "check-syntax.js"), maxSymbols: 20 },
   });
   assert.ok(outline.result, JSON.stringify(outline));
-  assert.match(outline.result.content[0].text, /invalidParams/);
+  assert.match(outline.result.content[0].text, /jsFiles/);
 
   const testSummary = await request("tools/call", {
     name: "logs",
@@ -689,10 +710,13 @@ try {
 
   const failed = await request("tools/call", {
     name: "run",
-    arguments: { command: isPowerShellConfigured() ? "exit 7" : `${shellQuote(process.execPath)} -e "process.exit(7)"` },
+    arguments: { command: isPowerShellConfigured() ? `& ${shellQuote(process.execPath)} -e "console.error('runtime boom'); process.exit(7)"` : `${shellQuote(process.execPath)} -e "console.error('runtime boom'); process.exit(7)"` },
   });
   assert.equal(failed.result.isError, true);
   assert.equal(failed.result._meta.exitCode, 7);
+  assert.equal(typeof failed.result._meta.response.returnedBytes, "number");
+  assert.match(failed.result.content[0].text, /details:\nexitCode: 7/);
+  assert.match(failed.result.content[0].text, /stderr:\nruntime boom/);
 
   const slow = request("tools/call", {
     name: "run",
@@ -703,6 +727,14 @@ try {
   const slowResult = await slow;
   assert.ok(slowResult.result.content[0].text.startsWith("slow"));
 
+  const noOutputRun = await request("tools/call", {
+    name: "run",
+    arguments: { command: nodeEvalCommand(""), maxLines: 20 },
+  });
+  assert.equal(noOutputRun.result.content[0].text, "(no output)");
+  assert.equal(noOutputRun.result._meta.empty, true);
+  assert.equal(noOutputRun.result._meta.emptyReason, "no_output");
+
   const read = await request("tools/call", {
     name: "read",
     arguments: { path: largeFile, maxLines: 20 },
@@ -711,6 +743,7 @@ try {
   assertSavingsMeta(read.result._meta);
   assert.ok(read.result._meta.savedBytes > 0);
   assert.equal(read.result._meta.fileReadLimited, true);
+  assert.match(read.result.content[0].text, /\[omitted: \d+ (bytes|lines)\]/);
   assert.match(read.result.content[0].text, /file line 0/);
   assert.match(read.result.content[0].text, /file line 299/);
 
@@ -914,6 +947,14 @@ try {
     assert.ok(dashPattern.result, JSON.stringify(dashPattern));
     assert.match(dashPattern.result.content[0].text, /-needle/);
 
+    const absoluteRepoSearch = await request("tools/call", {
+      name: "search",
+      arguments: { pattern: "## Version Pinning", path: join(import.meta.dirname, "README.md"), maxMatches: 1 },
+    });
+    assert.ok(absoluteRepoSearch.result, JSON.stringify(absoluteRepoSearch));
+    assert.match(absoluteRepoSearch.result.content[0].text, /^README\.md:/);
+    assert.doesNotMatch(absoluteRepoSearch.result.content[0].text, new RegExp(import.meta.dirname.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")));
+
     const grepContext = await request("tools/call", {
       name: "search",
       arguments: { pattern: "file line 29", path: largeFile, contextLines: 1, maxMatches: 3 },
@@ -923,7 +964,7 @@ try {
     assert.equal(typeof grepContext.result._meta.rgPath, "string");
     assert.equal(grepContext.result._meta.shownMatches, 3);
     assert.equal(grepContext.result._meta.totalMatchesKnown, false);
-    assert.match(grepContext.result.content[0].text, /more matches omitted/);
+    assert.match(grepContext.result.content[0].text, /\[omitted: more matches\]/);
 
     const limitedContext = await request("tools/call", {
       name: "search",
@@ -936,7 +977,7 @@ try {
     assert.doesNotMatch(limitedContext.result.content[0].text, /before-two-a/);
     assert.doesNotMatch(limitedContext.result.content[0].text, /before-two-b/);
     assert.doesNotMatch(limitedContext.result.content[0].text, /match-two/);
-    assert.match(limitedContext.result.content[0].text, /more matches omitted/);
+    assert.match(limitedContext.result.content[0].text, /\[omitted: more matches\]/);
 
     const byteLimitedSearch = await request("tools/call", {
       name: "search",
@@ -952,6 +993,8 @@ try {
     });
     assert.equal(noMatchSearch.result.content[0].text, "(no matches)");
     assert.equal(noMatchSearch.result._meta.totalBytes, noMatchSearch.result._meta.returnedBytes);
+    assert.equal(noMatchSearch.result._meta.empty, true);
+    assert.equal(noMatchSearch.result._meta.emptyReason, "no_matches");
 
     const noMatchGrepContext = await request("tools/call", {
       name: "search",
@@ -959,6 +1002,8 @@ try {
     });
     assert.equal(noMatchGrepContext.result.content[0].text, "(no matches)");
     assert.equal(noMatchGrepContext.result._meta.totalBytes, noMatchGrepContext.result._meta.returnedBytes);
+    assert.equal(noMatchGrepContext.result._meta.empty, true);
+    assert.equal(noMatchGrepContext.result._meta.emptyReason, "no_matches");
   }
 
   const invalidSearchMaxMatches = await request("tools/call", {
@@ -1087,7 +1132,7 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
   assert.match(fakeAstPayload.text, /src\/example\.ts:5:3: target\(\)/);
   assert.match(fakeAstPayload.text, /> 5: target\(\);/);
   assert.match(fakeAstPayload.text, / 4: before\(\);/);
-  assert.match(fakeAstPayload.text, /more matches omitted/);
+  assert.match(fakeAstPayload.text, /\[omitted: more matches\]/);
 
   const missingAstGrepRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
     const { callTool } = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "src", "tools.js")).href)});
@@ -1127,7 +1172,11 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
   assertSavingsMeta(fetched.result._meta);
   assert.ok(fetched.result._meta.savedBytes > 0);
   assert.equal(fetched.result._meta.downloadLimited, true);
-  assert.match(fetched.result.content[0].text, /lines omitted/);
+  assert.equal(fetched.result._meta.status, 200);
+  assert.match(fetched.result._meta.contentType, /html/);
+  assert.equal(fetched.result._meta.htmlStripped, true);
+  assert.equal(typeof fetched.result._meta.durationMs, "number");
+  assert.match(fetched.result.content[0].text, /\[omitted: \d+ lines\]/);
 
   const fetchedAgain = await request("tools/call", {
     name: "fetch",
@@ -1217,6 +1266,8 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
     arguments: { url: cacheUrl },
   });
   assert.equal(cachedFetch.result._meta.cached, true);
+  assert.equal(cachedFetch.result._meta.finalUrl, cacheUrl);
+  assert.equal(typeof cachedFetch.result._meta.durationMs, "number");
 
   const cacheRace = await runProcess(process.execPath, ["--input-type=module", "-e", `
     import { readFile } from 'node:fs/promises';
@@ -1312,8 +1363,8 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
     assert.match(diffPayload.diff.text, /Diff stat:/);
     assert.match(diffPayload.diff.text, /Diff hunks:/);
     assert.match(diffPayload.diff.text, /a\.txt/);
-    assert.match(diffPayload.diff.text, /more hunks omitted/);
-    assert.match(diffPayload.diff.text, /more files omitted/);
+    assert.match(diffPayload.diff.text, /\[omitted: more hunks\]/);
+    assert.match(diffPayload.diff.text, /\[omitted: more files\]/);
     assert.equal(diffPayload.diff.meta.filesChanged, 2);
     assert.equal(diffPayload.diff.meta.filesShown, 1);
     assert.equal(diffPayload.diff.meta.filesLimited, true);
@@ -1337,9 +1388,13 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
     assert.equal(diffPayload.noStagedStatus.text, "(no changed files)");
     assert.equal(diffPayload.noStagedStatus.meta.staged, true);
     assert.equal(diffPayload.noStagedStatus.meta.changedFiles, 0);
+    assert.equal(diffPayload.noStagedStatus.meta.empty, true);
+    assert.equal(diffPayload.noStagedStatus.meta.emptyReason, "no_changed_files");
     assert.equal(diffPayload.noStagedDiff.text, "(no diff)");
     assert.equal(diffPayload.noStagedDiff.meta.staged, true);
     assert.equal(diffPayload.noStagedDiff.meta.truncated, false);
+    assert.equal(diffPayload.noStagedDiff.meta.empty, true);
+    assert.equal(diffPayload.noStagedDiff.meta.emptyReason, "no_diff");
 
     await git(["add", "a.txt"]);
     const stagedStatusRun = await runProcess(process.execPath, ["--input-type=module", "-e", `
@@ -1402,6 +1457,9 @@ console.log(JSON.stringify(match(8, 4, 'target()', 'target();')));
   assert.equal(parsedStats.byTool.fetch.calls, 1);
   assert.ok(parsedStats.returnedBytes <= parsedStats.totalBytes);
   assert.ok(parsedStats.byTool.run.returnedBytes <= parsedStats.byTool.run.totalBytes);
+  assert.equal(typeof parsedStats.response, "object");
+  assert.equal(typeof parsedStats.response.totalBytes, "number");
+  assert.equal(typeof parsedStats.response.returnedBytes, "number");
   assert.equal(typeof parsedStats.responseTotalBytes, "number");
   assert.equal(typeof parsedStats.responseReturnedBytes, "number");
   assert.equal(typeof parsedStats.responseSavedBytes, "number");

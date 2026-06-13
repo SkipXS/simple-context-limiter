@@ -2,7 +2,7 @@ import { MAX_BYTES, MAX_LINES, projectKey } from "../constants.js";
 import { formatOutput } from "../output.js";
 import { emptyCounter, formatStatsReport, getStats, normalizeCounter, withSavedPercent } from "../stats.js";
 import { usageReport } from "../usage.js";
-import { invalidParams, savingsMeta, validateInteger } from "./shared.js";
+import { invalidParams, responseMeta, savingsMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 export async function usageTool(args) {
   const { mode = "stats", maxEvents = 1000, maxLines = MAX_LINES, maxBytes = MAX_BYTES } = args ?? {};
@@ -17,7 +17,7 @@ export async function usageTool(args) {
   const report = await usageReport({ maxEvents: eventLimit });
   const text = mode === "guidance" ? formatGuidance(report.meta) : report.text;
   const formatted = formatOutput(text, lineLimit, byteLimit);
-  const meta = {
+  const meta = withResponseMeta({
     mode,
     ...report.meta,
     totalLines: formatted.totalLines,
@@ -25,7 +25,7 @@ export async function usageTool(args) {
     ...savingsMeta(formatted),
     truncated: formatted.truncated,
     durationMs: Date.now() - started,
-  };
+  });
 
   return { content: [{ type: "text", text: formatted.text }], _meta: meta };
 }
@@ -91,16 +91,27 @@ async function statsResult(maxLines, maxBytes) {
   };
   const formatted = formatOutput(formatStatsReport(stats), maxLines, maxBytes);
 
+  const response = responseMeta({
+    totalLines: formatted.totalLines,
+    totalBytes: formatted.totalBytes,
+    returnedBytes: formatted.returnedBytes,
+    savedBytes: formatted.savedBytes,
+    savedPercent: formatted.savedPercent,
+    estimatedTokensSaved: formatted.estimatedTokensSaved,
+    truncated: formatted.truncated,
+  });
+
   return {
     content: [{ type: "text", text: formatted.text }],
     _meta: {
       ...stats,
       totalLines: formatted.totalLines,
-      responseTotalBytes: formatted.totalBytes,
-      responseReturnedBytes: formatted.returnedBytes,
-      responseSavedBytes: formatted.savedBytes,
-      responseSavedPercent: formatted.savedPercent,
-      responseEstimatedTokensSaved: formatted.estimatedTokensSaved,
+      response,
+      responseTotalBytes: response.totalBytes,
+      responseReturnedBytes: response.returnedBytes,
+      responseSavedBytes: response.savedBytes,
+      responseSavedPercent: response.savedPercent,
+      responseEstimatedTokensSaved: response.estimatedTokensSaved,
       truncated: formatted.truncated,
       durationMs: Date.now() - started,
     },

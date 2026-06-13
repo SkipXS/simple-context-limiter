@@ -2,7 +2,7 @@ import { MAX_BYTES, MAX_LINES } from "../constants.js";
 import { formatOutput } from "../output.js";
 import { commandError, runProcess } from "../process.js";
 import { recordStats } from "../stats.js";
-import { invalidParams, savingsForText, validateInteger } from "./shared.js";
+import { invalidParams, omission, relativePath, savingsForText, validateInteger, withResponseMeta } from "./shared.js";
 
 export async function diffTool(args) {
   const {
@@ -51,12 +51,14 @@ export async function diffTool(args) {
   const previewText = composeDiffText(statText, limitedDiff.text);
   const formatted = formatOutput(previewText, lineLimit, byteLimit);
   const diffSavings = savingsForText(originalText, formatted.text);
-  const meta = {
+  const meta = withResponseMeta({
     totalLines: originalText.split("\n").length,
     totalBytes: diffSavings.totalBytes,
     ...diffSavings,
     truncated: limitedDiff.filesLimited || limitedDiff.hunksLimited || formatted.truncated,
     mode,
+    path: normalizedDiffPath,
+    relativePath: normalizedDiffPath === undefined ? undefined : relativePath(normalizedDiffPath),
     staged,
     stat,
     filesChanged: countDiffFiles(fullDiff),
@@ -65,8 +67,10 @@ export async function diffTool(args) {
     hunksChanged: countDiffHunks(fullDiff),
     hunksShown: limitedDiff.hunksShown,
     hunksLimited: limitedDiff.hunksLimited,
+    empty: originalText === "(no diff)",
+    emptyReason: originalText === "(no diff)" ? "no_diff" : undefined,
     durationMs,
-  };
+  });
   await recordStats("diff", meta);
 
   return {
@@ -90,17 +94,20 @@ async function historyTool(diffPath, maxCommits, maxLines, maxBytes) {
   const text = raw ? `Commit history:\n${raw}` : "(no commit history)";
   const formatted = formatOutput(text, maxLines, maxBytes);
   const historySavings = savingsForText(text, formatted.text);
-  const meta = {
+  const meta = withResponseMeta({
     mode: "history",
     path: diffPath,
+    relativePath: diffPath === undefined ? undefined : relativePath(diffPath),
     maxCommits,
     commitsShown: countHistoryCommits(raw),
     totalLines: text.split("\n").length,
     totalBytes: historySavings.totalBytes,
     ...historySavings,
     truncated: formatted.truncated,
+    empty: raw === "",
+    emptyReason: raw === "" ? "no_commit_history" : undefined,
     durationMs: Date.now() - started,
-  };
+  });
   await recordStats("diff", meta);
 
   return { content: [{ type: "text", text: formatted.text }], _meta: meta };
@@ -120,9 +127,10 @@ async function statusTool(diffPath, staged, maxLines, maxBytes) {
     .map(formatStatusLine);
   const text = lines.join("\n") || "(no changed files)";
   const formatted = formatOutput(text, maxLines, maxBytes);
-  const meta = {
+  const meta = withResponseMeta({
     mode: "status",
     path: diffPath,
+    relativePath: diffPath === undefined ? undefined : relativePath(diffPath),
     staged,
     changedFiles: lines.length,
     totalLines: formatted.totalLines,
@@ -132,8 +140,10 @@ async function statusTool(diffPath, staged, maxLines, maxBytes) {
     savedPercent: formatted.savedPercent,
     estimatedTokensSaved: formatted.estimatedTokensSaved,
     truncated: formatted.truncated,
+    empty: lines.length === 0,
+    emptyReason: lines.length === 0 ? "no_changed_files" : undefined,
     durationMs: Date.now() - started,
-  };
+  });
   await recordStats("diff", meta);
 
   return { content: [{ type: "text", text: formatted.text }], _meta: meta };
@@ -222,7 +232,7 @@ function limitDiff(diffText, maxFiles, maxHunks) {
       if (hunksShown >= maxHunks) {
         hunksLimited = true;
         includeHunk = false;
-        if (output.at(-1) !== "... more hunks omitted ...") output.push("... more hunks omitted ...");
+        if (output.at(-1) !== omission("hunks")) output.push(omission("hunks"));
         continue;
       }
 
@@ -235,7 +245,7 @@ function limitDiff(diffText, maxFiles, maxHunks) {
     if (!seenHunkInFile || includeHunk) output.push(line);
   }
 
-  if (filesLimited) output.push("... more files omitted ...");
+  if (filesLimited) output.push(omission("files"));
 
   return {
     text: output.join("\n"),

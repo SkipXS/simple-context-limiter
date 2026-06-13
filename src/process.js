@@ -88,6 +88,9 @@ export function commandErrorData(error) {
 
   if (error.status !== null && error.status !== undefined) data.exitCode = error.status;
   if (error.signal) data.signal = error.signal;
+  if (typeof error.timedOut === "boolean") data.timedOut = error.timedOut;
+  if (typeof error.outputTooLarge === "boolean") data.outputTooLarge = error.outputTooLarge;
+  if (Number.isFinite(error.timeoutMs)) data.timeoutMs = error.timeoutMs;
 
   for (const stream of ["stdout", "stderr"]) {
     const value = error[stream];
@@ -112,6 +115,9 @@ export function commandError(command, code, signal, stdout, stderr, timedOut = f
   error.signal = signal;
   error.stdout = stdout;
   error.stderr = stderr;
+  error.timedOut = timedOut;
+  error.outputTooLarge = outputTooLarge;
+  error.timeoutMs = timeoutMs;
   throw error;
 }
 

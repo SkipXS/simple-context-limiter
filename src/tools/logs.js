@@ -2,7 +2,7 @@ import { COMMAND_SHELL_NAME, DEFAULT_COMMAND_TIMEOUT_MS, MAX_BYTES, MAX_COMMAND_
 import { formatOutput } from "../output.js";
 import { runCommandResult } from "../process.js";
 import { recordStats } from "../stats.js";
-import { invalidParams, savingsForText, validateInteger } from "./shared.js";
+import { invalidParams, omission, savingsForText, validateInteger, withResponseMeta } from "./shared.js";
 
 export async function logsTool(args) {
   return await logsResult(args, "logs");
@@ -36,11 +36,13 @@ export async function logsResult(args, toolName) {
   const previewText = [statusLine, extraction.text].join("\n");
   const formatted = formatOutput(previewText, lineLimit, byteLimit);
   const logSavings = savingsForText(originalText, formatted.text);
-  const meta = {
+  const meta = withResponseMeta({
     totalLines: originalText.split("\n").length,
     totalBytes: logSavings.totalBytes,
     ...logSavings,
     truncated: extraction.truncated || formatted.truncated || result.outputTooLarge,
+    empty: outputText === "",
+    emptyReason: outputText === "" ? "no_output" : undefined,
     exitCode: result.code,
     signal: result.signal,
     timedOut: result.timedOut,
@@ -51,7 +53,7 @@ export async function logsResult(args, toolName) {
     blocksFound: extraction.blocksFound,
     blocksShown: extraction.blocksShown,
     fallback: extraction.fallback,
-  };
+  });
   await recordStats(toolName, meta);
 
   return {
@@ -119,7 +121,7 @@ function extractLogBlocks(text, maxBlocks, contextLines, maxLines) {
   }
 
   const limitedByBlocks = ranges.length > shownRanges.length;
-  if (limitedByBlocks) output.push(`... ${ranges.length - shownRanges.length} more blocks omitted ...`);
+  if (limitedByBlocks) output.push(omission("blocks", ranges.length - shownRanges.length));
 
   return {
     text: output.join("\n"),

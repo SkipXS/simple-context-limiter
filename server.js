@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { MAX_RPC_BATCH_CONCURRENCY, MAX_RPC_BATCH_SIZE, MAX_RPC_LINE_BYTES, SERVER_NAME, SERVER_VERSION } from "./src/constants.js";
+import { MAX_RPC_BATCH_CONCURRENCY, MAX_RPC_BATCH_SIZE, MAX_RPC_LINE_BYTES, MAX_RPC_TOOL_CONCURRENCY, SERVER_NAME, SERVER_VERSION } from "./src/constants.js";
 import { tools, callTool } from "./src/tools.js";
 import { commandErrorData, errorData } from "./src/process.js";
 
@@ -40,13 +40,43 @@ function isProtocolToolError(error) {
 }
 
 function toolErrorResult(error) {
-  const meta = commandErrorData(error) ?? errorData(error);
-  const result = {
-    content: [{ type: "text", text: error.message }],
+  const diagnosticMeta = commandErrorData(error) ?? errorData(error) ?? {};
+  const text = formatToolErrorText(error, Object.keys(diagnosticMeta).length > 0 ? diagnosticMeta : undefined);
+  const returnedBytes = Buffer.byteLength(text, "utf8");
+  return {
+    content: [{ type: "text", text }],
     isError: true,
+    _meta: {
+      ...diagnosticMeta,
+      response: {
+        totalLines: text.split("\n").length,
+        totalBytes: returnedBytes,
+        returnedBytes,
+        savedBytes: 0,
+        savedPercent: 0,
+        estimatedTokensSaved: 0,
+        truncated: false,
+      },
+    },
   };
-  if (meta !== undefined) result._meta = meta;
-  return result;
+}
+
+function formatToolErrorText(error, meta) {
+  if (!meta || typeof meta !== "object") return error.message;
+
+  const lines = [error.message];
+  const details = [];
+  for (const key of ["exitCode", "signal", "timedOut", "outputTooLarge", "timeoutMs", "httpStatus", "httpStatusText", "code", "errno", "address", "port", "url"]) {
+    if (meta[key] !== undefined) details.push(`${key}: ${meta[key]}`);
+  }
+  if (details.length > 0) lines.push("", "details:", ...details);
+  if (meta.stderr) lines.push("", "stderr:", meta.stderr);
+  if (meta.stdout) lines.push("", "stdout:", meta.stdout);
+  if (meta.cause?.message || meta.cause?.code) {
+    lines.push("", "cause:", [meta.cause.code, meta.cause.message].filter(Boolean).join(" - "));
+  }
+
+  return lines.join("\n");
 }
 
 function isRequestObject(message) {
@@ -91,6 +121,28 @@ function validateInitializeParams(params) {
 
 function rpcCode(error) {
   return Number.isInteger(error.code) ? error.code : -32000;
+}
+
+let activeToolCalls = 0;
+const waitingToolCalls = [];
+
+function acquireToolCallSlot() {
+  if (activeToolCalls < MAX_RPC_TOOL_CONCURRENCY) {
+    activeToolCalls++;
+    return undefined;
+  }
+  return new Promise((resolve) => waitingToolCalls.push(resolve));
+}
+
+async function runToolCallLimited(fn) {
+  await acquireToolCallSlot();
+  try {
+    return await fn();
+  } finally {
+    const next = waitingToolCalls.shift();
+    if (next) next();
+    else activeToolCalls--;
+  }
 }
 
 const instructions = "Default to run, logs, read, search, discover, fetch, diff, and usage for exploratory commands, logs, file previews, searches, repo overview, tests, web pages, git previews, and usage stats. "
@@ -153,7 +205,7 @@ async function handleMessage(msg) {
       requireInitialized(method);
       if (!hasId) return undefined;
       const { name, args } = validateToolCallParams(params);
-      const result = await callTool(name, args);
+      const result = await runToolCallLimited(() => callTool(name, args));
       return resultResponse(id, result);
     }
 

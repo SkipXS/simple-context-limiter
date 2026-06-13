@@ -5,7 +5,7 @@ import { MAX_BYTES, MAX_LINES, MAX_READ_BYTES, RG_NAME } from "../constants.js";
 import { formatOutput } from "../output.js";
 import { commandError, runProcessLines } from "../process.js";
 import { recordStats } from "../stats.js";
-import { invalidParams, savingsForText, savingsMeta, validateInteger } from "./shared.js";
+import { invalidParams, omission, relativePath, savingsForText, savingsMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 const MATCH_SEPARATOR = "\x1f";
 const CONTEXT_SEPARATOR = "\x1e";
@@ -151,12 +151,14 @@ export async function searchTool(args) {
   const lineLimit = validateInteger(maxLines, "search maxLines", 10, 200);
   const byteLimit = validateInteger(maxBytes, "search maxBytes", 1024, MAX_BYTES);
 
+  const commandSearchPath = relativePath(searchPath);
+
   if (engine === "ast") {
     const astLanguage = normalizeAstLanguage(language, searchPath, include);
     if (!astLanguage) {
       invalidParams("search language is required when engine is ast unless it can be inferred from path or include");
     }
-    return await astSearchTool(pattern, searchPath, include, astLanguage, contextLimit, limit, lineLimit, byteLimit);
+    return await astSearchTool(pattern, commandSearchPath, include, astLanguage, contextLimit, limit, lineLimit, byteLimit);
   }
 
   const rg = await findRg();
@@ -169,12 +171,12 @@ export async function searchTool(args) {
   }
 
   if (contextLimit > 0) {
-    return await searchWithContext(rg, pattern, searchPath, include, contextLimit, limit, lineLimit, byteLimit);
+    return await searchWithContext(rg, pattern, commandSearchPath, include, contextLimit, limit, lineLimit, byteLimit);
   }
 
   const rgArgs = ["--line-number", "--with-filename", "--color", "never", "--no-heading"];
   if (include) rgArgs.push("--glob", include);
-  rgArgs.push("--", pattern, searchPath);
+  rgArgs.push("--", pattern, commandSearchPath);
 
   const result = await runProcessLines(rg, rgArgs, {
     cwd: process.cwd(),
@@ -185,19 +187,22 @@ export async function searchTool(args) {
   if (result.code === 1) {
     const text = "(no matches)";
     const totalBytes = Buffer.byteLength(text, "utf8");
-    const meta = {
+    const meta = withResponseMeta({
       rgPath: rg,
       totalMatches: 0,
       totalMatchesKnown: true,
       shownMatches: 0,
+      totalLines: 1,
       totalBytes,
       returnedBytes: totalBytes,
       savedBytes: 0,
       savedPercent: 0,
       estimatedTokensSaved: 0,
       truncated: false,
+      empty: true,
+      emptyReason: "no_matches",
       durationMs: result.durationMs,
-    };
+    });
     await recordStats("search", meta);
 
     return {
@@ -214,11 +219,11 @@ export async function searchTool(args) {
   const matchLimited = result.truncated || result.outputTooLarge || matches.length > limit;
   const originalText = matches.join("\n");
   const text = matchLimited
-    ? [...shown, `... more matches omitted ...`].join("\n")
+    ? [...shown, omission("matches")].join("\n")
     : originalText || "(no matches)";
   const formatted = formatOutput(text, lineLimit, byteLimit);
   const searchSavings = matchLimited ? savingsForText(originalText, formatted.text) : savingsMeta(formatted);
-  const meta = {
+  const meta = withResponseMeta({
     rgPath: rg,
     totalMatches: matchLimited ? undefined : matches.length,
     totalMatchesKnown: !matchLimited,
@@ -228,8 +233,10 @@ export async function searchTool(args) {
     totalBytes: searchSavings.totalBytes ?? formatted.totalBytes,
     ...searchSavings,
     truncated: matchLimited || formatted.truncated,
+    empty: !matchLimited && matches.length === 0,
+    emptyReason: !matchLimited && matches.length === 0 ? "no_matches" : undefined,
     durationMs: result.durationMs,
-  };
+  });
   await recordStats("search", meta);
 
   return {
@@ -298,7 +305,7 @@ async function astSearchTool(pattern, searchPath, include, language, contextLine
     ? formatAstMatches(shown, matchLimited)
     : "(no matches)";
   const formatted = formatOutput(text, maxLines, maxBytes);
-  const meta = {
+  const meta = withResponseMeta({
     engine: "ast",
     astGrepPath: sg,
     language,
@@ -311,8 +318,10 @@ async function astSearchTool(pattern, searchPath, include, language, contextLine
     totalBytes: formatted.totalBytes,
     ...savingsMeta(formatted),
     truncated: matchLimited || formatted.truncated,
+    empty: shown.length === 0,
+    emptyReason: shown.length === 0 ? "no_matches" : undefined,
     durationMs: Date.now() - started,
-  };
+  });
   await recordStats("search", meta);
 
   return { content: [{ type: "text", text: formatted.text }], _meta: meta };
@@ -330,12 +339,12 @@ function parseAstGrepLine(line) {
 
 function formatAstMatches(matches, limited) {
   const lines = matches.flatMap(formatAstMatch);
-  if (limited) lines.push("... more matches omitted ...");
+  if (limited) lines.push(omission("matches"));
   return lines.join("\n");
 }
 
 function formatAstMatch(match) {
-  const file = typeof match.file === "string" ? match.file : "(unknown file)";
+  const file = typeof match.file === "string" ? relativePath(match.file) : "(unknown file)";
   const start = match.range?.start;
   const line = Number.isInteger(start?.line) ? start.line + 1 : 0;
   const column = Number.isInteger(start?.column) ? start.column + 1 : 0;
@@ -398,7 +407,7 @@ async function searchWithContext(rg, pattern, searchPath, include, contextLines,
   const limited = limitRgContext(result.lines, maxMatches, contextLines);
   const text = limited.text || "(no matches)";
   const formatted = formatOutput(text, maxLines, maxBytes);
-  const meta = {
+  const meta = withResponseMeta({
     rgPath: rg,
     contextLines,
     linesRead: result.lines.length,
@@ -410,8 +419,10 @@ async function searchWithContext(rg, pattern, searchPath, include, contextLines,
     totalBytes: formatted.totalBytes,
     ...savingsMeta(formatted),
     truncated: limited.matchLimited || result.truncated || result.outputTooLarge || formatted.truncated,
+    empty: !limited.matchLimited && limited.shownMatches === 0,
+    emptyReason: !limited.matchLimited && limited.shownMatches === 0 ? "no_matches" : undefined,
     durationMs: Date.now() - started,
-  };
+  });
   await recordStats("search", meta);
 
   return { content: [{ type: "text", text: formatted.text }], _meta: meta };
@@ -455,7 +466,7 @@ function limitRgContext(lines, maxMatches, contextLines) {
     }
   }
 
-  if (matchLimited) output.push("... more matches omitted ...");
+  if (matchLimited) output.push(omission("matches"));
   return { text: output.join("\n"), matchesRead, shownMatches, matchLimited };
 }
 
@@ -489,13 +500,13 @@ function parseRgContextLine(line) {
 }
 
 function formatRgContextLine(line, separator) {
-  return `${line.file}${separator}${line.lineNumber}${separator}${line.text}`;
+  return `${relativePath(line.file)}${separator}${line.lineNumber}${separator}${line.text}`;
 }
 
 async function noMatches(rg, durationMs, contextLines) {
   const text = "(no matches)";
   const totalBytes = Buffer.byteLength(text, "utf8");
-  const meta = {
+  const meta = withResponseMeta({
     rgPath: rg,
     contextLines,
     linesRead: 0,
@@ -506,8 +517,10 @@ async function noMatches(rg, durationMs, contextLines) {
     savedPercent: 0,
     estimatedTokensSaved: 0,
     truncated: false,
+    empty: true,
+    emptyReason: "no_matches",
     durationMs,
-  };
+  });
   await recordStats("search", meta);
 
   return { content: [{ type: "text", text }], _meta: meta };

@@ -3,7 +3,7 @@ import { ALLOW_NON_HTTP_FETCH, CACHE_TTL_MS, MAX_BYTES, MAX_FETCH_BYTES, MAX_LIN
 import { getCache, updateCache } from "../cache.js";
 import { decodeUtf8, formatOutput } from "../output.js";
 import { recordStats } from "../stats.js";
-import { invalidParams, savingsMeta, validateInteger } from "./shared.js";
+import { invalidParams, savingsMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 function htmlToText(html) {
   return html
@@ -63,10 +63,23 @@ async function fetchUrl(url, force) {
   }
 
   const key = createHash("sha256").update(url).digest("hex");
+  const started = Date.now();
   const currentCache = await getCache();
   const cached = currentCache[key];
   if (!force && cached && !cached.limited && Date.now() - cached.ts < CACHE_TTL_MS) {
-    return { content: cached.content, cached: true, limited: cached.limited ?? false };
+    return {
+      content: cached.content,
+      cached: true,
+      limited: cached.limited ?? false,
+      url,
+      finalUrl: cached.finalUrl ?? url,
+      status: cached.status,
+      statusText: cached.statusText,
+      contentType: cached.contentType,
+      htmlStripped: cached.htmlStripped,
+      transformed: cached.transformed,
+      durationMs: Date.now() - started,
+    };
   }
 
   let res;
@@ -94,14 +107,24 @@ async function fetchUrl(url, force) {
   }
 
   const contentType = res.headers.get("content-type") ?? "";
+  const htmlStripped = /\bhtml\b/i.test(contentType);
   const { text: raw, limited } = await readLimitedText(res, MAX_FETCH_BYTES);
-  const text = contentType.includes("html") ? htmlToText(raw) : raw;
+  const text = htmlStripped ? htmlToText(raw) : raw;
+  const metadata = {
+    url,
+    finalUrl: res.url || url,
+    status: res.status,
+    statusText: res.statusText,
+    contentType,
+    htmlStripped,
+    transformed: htmlStripped,
+  };
 
   await updateCache((cache) => {
     if (limited) delete cache[key];
-    else cache[key] = { ts: Date.now(), content: text, limited };
+    else cache[key] = { ts: Date.now(), content: text, limited, ...metadata };
   });
-  return { content: text, cached: false, limited };
+  return { content: text, cached: false, limited, ...metadata, durationMs: Date.now() - started };
 }
 
 async function readLimitedText(res, maxBytes) {
@@ -148,14 +171,24 @@ export async function fetchTool(args) {
 
   const data = await fetchUrl(url, force);
   const formatted = formatOutput(data.content, lineLimit, byteLimit);
-  const meta = {
+  const meta = withResponseMeta({
     totalLines: formatted.totalLines,
     totalBytes: formatted.totalBytes,
     ...savingsMeta(formatted),
     truncated: formatted.truncated || data.limited,
+    empty: data.content === "",
+    emptyReason: data.content === "" ? "empty_response" : undefined,
+    url: data.url,
+    finalUrl: data.finalUrl,
+    status: data.status,
+    statusText: data.statusText,
+    contentType: data.contentType,
+    htmlStripped: data.htmlStripped,
+    transformed: data.transformed,
     cached: data.cached,
     downloadLimited: data.limited,
-  };
+    durationMs: data.durationMs,
+  });
   await recordStats("fetch", meta);
 
   return {

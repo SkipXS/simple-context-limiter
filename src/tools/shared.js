@@ -1,3 +1,5 @@
+import * as path from "node:path";
+
 export function invalidParams(message) {
   const error = new Error(message);
   error.code = -32602;
@@ -25,6 +27,38 @@ export function savingsMeta(formatted) {
     savedPercent: formatted.savedPercent,
     estimatedTokensSaved: formatted.estimatedTokensSaved,
   };
+}
+
+export function responseMeta(meta) {
+  return {
+    totalLines: meta.totalLines,
+    totalBytes: meta.totalBytes,
+    totalBytesKnown: meta.totalBytesKnown,
+    returnedBytes: meta.returnedBytes,
+    savedBytes: meta.savedBytes,
+    savedPercent: meta.savedPercent,
+    estimatedTokensSaved: meta.estimatedTokensSaved,
+    truncated: Boolean(meta.truncated),
+  };
+}
+
+export function withResponseMeta(meta) {
+  return { ...meta, response: responseMeta(meta) };
+}
+
+export function relativePath(filePath, root = process.cwd()) {
+  if (typeof filePath !== "string" || filePath.trim() === "") return undefined;
+  const resolvedRoot = path.resolve(root);
+  const resolvedPath = path.resolve(filePath);
+  const relative = path.relative(resolvedRoot, resolvedPath);
+  if (relative === "") return ".";
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return resolvedPath;
+  return relative.replaceAll(path.sep, "/");
+}
+
+export function omission(kind, count) {
+  const amount = Number.isFinite(count) ? String(count) : "more";
+  return `[omitted: ${amount} ${kind}]`;
 }
 
 export function savingsForText(originalText, returnedText) {

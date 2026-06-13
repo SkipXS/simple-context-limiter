@@ -4,7 +4,7 @@ import { MAX_BYTES, MAX_LINES, MAX_READ_BYTES } from "../constants.js";
 import { decodeUtf8, formatOutput } from "../output.js";
 import { runProcess, runProcessLines } from "../process.js";
 import { recordStats } from "../stats.js";
-import { invalidParams, savingsMeta, validateInteger } from "./shared.js";
+import { invalidParams, omission, relativePath, savingsMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage"]);
 
@@ -39,13 +39,15 @@ async function filesMode(args) {
   const filtered = matcher && !limited ? files.filter((file) => matcher.test(file)) : files;
   const shown = filtered.slice(0, fileLimit);
   const text = limited
-    ? [...shown, "... more files omitted ..."].join("\n")
+    ? [...shown, omission("files")].join("\n")
     : filtered.length > shown.length
-    ? [...shown, `... ${filtered.length - shown.length} more files omitted ...`].join("\n")
+    ? [...shown, omission("files", filtered.length - shown.length)].join("\n")
     : shown.join("\n") || "(no files)";
   const formatted = formatOutput(text, lineLimit, byteLimit);
-  const meta = {
+  const meta = withResponseMeta({
     mode: "files",
+    path: path.resolve(inputPath),
+    relativePath: relativePath(inputPath),
     totalFiles: limited ? undefined : filtered.length,
     totalFilesKnown: !limited,
     shownFiles: shown.length,
@@ -53,8 +55,10 @@ async function filesMode(args) {
     totalBytes: formatted.totalBytes,
     ...savingsMeta(formatted),
     truncated: limited || filtered.length > shown.length || formatted.truncated,
+    empty: filtered.length === 0,
+    emptyReason: filtered.length === 0 ? "no_files" : undefined,
     durationMs: Date.now() - started,
-  };
+  });
   await recordStats("discover", meta);
 
   return { content: [{ type: "text", text: formatted.text }], _meta: meta };
@@ -121,14 +125,15 @@ async function treeMode(args) {
   const started = Date.now();
   const root = path.resolve(inputPath);
   const state = { entries: 0, omitted: 0, depthLimited: false };
-  const lines = [path.basename(root) || root];
+  const lines = [relativePath(root) ?? (path.basename(root) || root)];
   await appendTree(root, "", 1, depthLimit, entryLimit, state, lines);
-  if (state.omitted > 0) lines.push(`... at least ${state.omitted} entries omitted ...`);
+  if (state.omitted > 0) lines.push(omission("entries", state.omitted));
 
   const formatted = formatOutput(lines.join("\n"), lineLimit, byteLimit);
-  const meta = {
+  const meta = withResponseMeta({
     mode: "tree",
     root,
+    relativeRoot: relativePath(root),
     entriesShown: state.entries,
     entriesOmitted: state.omitted,
     entriesOmittedLowerBound: state.omitted,
@@ -139,7 +144,7 @@ async function treeMode(args) {
     ...savingsMeta(formatted),
     truncated: state.omitted > 0 || state.depthLimited || formatted.truncated,
     durationMs: Date.now() - started,
-  };
+  });
   await recordStats("discover", meta);
 
   return { content: [{ type: "text", text: formatted.text }], _meta: meta };
@@ -194,7 +199,7 @@ async function summaryMode(args) {
   const byteLimit = validateInteger(maxBytes, "discover maxBytes", 1024, MAX_BYTES);
   const started = Date.now();
   const root = process.cwd();
-  const lines = [`Project: ${root}`];
+  const lines = [`Project: ${relativePath(root)}`];
 
   const packageJson = await readJsonIfExists(path.join(root, "package.json"));
   if (packageJson) {
@@ -221,7 +226,7 @@ async function summaryMode(args) {
   } catch {}
 
   const formatted = formatOutput(lines.join("\n"), lineLimit, byteLimit);
-  const meta = { mode: "summary", totalLines: formatted.totalLines, totalBytes: formatted.totalBytes, ...savingsMeta(formatted), truncated: formatted.truncated, durationMs: Date.now() - started };
+  const meta = withResponseMeta({ mode: "summary", root, relativeRoot: relativePath(root), totalLines: formatted.totalLines, totalBytes: formatted.totalBytes, ...savingsMeta(formatted), truncated: formatted.truncated, durationMs: Date.now() - started });
   await recordStats("discover", meta);
 
   return { content: [{ type: "text", text: formatted.text }], _meta: meta };
@@ -262,9 +267,10 @@ async function outlineMode(args) {
   const symbols = outline.slice(0, symbolLimit);
   const output = symbols.length > 0 ? symbols.join("\n") : "(no outline symbols found)";
   const formatted = formatOutput(output, lineLimit, byteLimit);
-  const meta = {
+  const meta = withResponseMeta({
     mode: "outline",
     path: resolved,
+    relativePath: relativePath(resolved),
     sizeBytes: stat.size,
     symbolsFound: outline.length,
     symbolsShown: symbols.length,
@@ -272,8 +278,10 @@ async function outlineMode(args) {
     totalBytes: formatted.totalBytes,
     ...savingsMeta(formatted),
     truncated: outline.length > symbols.length || formatted.truncated,
+    empty: outline.length === 0,
+    emptyReason: outline.length === 0 ? "no_symbols" : undefined,
     durationMs: Date.now() - started,
-  };
+  });
   await recordStats("discover", meta);
 
   return { content: [{ type: "text", text: formatted.text }], _meta: meta };

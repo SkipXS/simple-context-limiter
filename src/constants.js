@@ -16,6 +16,7 @@ export const MAX_READ_BYTES = normalizeByteLimit(process.env.SIMPLE_CONTEXT_LIMI
 export const MAX_RPC_LINE_BYTES = normalizeIntegerLimit(process.env.SIMPLE_CONTEXT_LIMITER_MAX_RPC_LINE_BYTES, 1024 * 1024, 1024, 100 * 1024 * 1024);
 export const MAX_RPC_BATCH_SIZE = normalizeIntegerLimit(process.env.SIMPLE_CONTEXT_LIMITER_MAX_RPC_BATCH_SIZE, 50, 1, 10_000);
 export const MAX_RPC_BATCH_CONCURRENCY = normalizeIntegerLimit(process.env.SIMPLE_CONTEXT_LIMITER_MAX_RPC_BATCH_CONCURRENCY, 4, 1, 1000);
+export const MAX_RPC_TOOL_CONCURRENCY = normalizeIntegerLimit(process.env.SIMPLE_CONTEXT_LIMITER_MAX_RPC_TOOL_CONCURRENCY, MAX_RPC_BATCH_CONCURRENCY, 1, 1000);
 export const READ_RANGE_TIMEOUT_MS = normalizeIntegerLimit(process.env.SIMPLE_CONTEXT_LIMITER_READ_RANGE_TIMEOUT_MS, 120_000, 1_000, 3_600_000);
 export const CACHE_MAX_ENTRIES = normalizeIntegerLimit(process.env.SIMPLE_CONTEXT_LIMITER_CACHE_MAX_ENTRIES, 200, 1, 10_000);
 export const CACHE_MAX_BYTES = normalizeByteLimit(process.env.SIMPLE_CONTEXT_LIMITER_CACHE_MAX_BYTES, 50 * 1024 * 1024);

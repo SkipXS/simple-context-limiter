@@ -178,7 +178,7 @@ Fetches an `http` or `https` URL, strips HTML to readable text, caches the resul
 { "url": "https://example.com/docs", "force": false, "maxLines": 100, "maxBytes": 16384 }
 ```
 
-Downloads are capped at 10 MB by default before parsing/caching. Override with `SIMPLE_CONTEXT_LIMITER_MAX_FETCH_BYTES` if needed.
+Downloads are capped at 10 MB by default before parsing/caching. Override with `SIMPLE_CONTEXT_LIMITER_MAX_FETCH_BYTES` if needed. `_meta` includes low-token traceability fields such as `url`, `finalUrl`, `status`, `contentType`, `cached`, `htmlStripped`, and `durationMs`.
 Non-HTTP schemes are blocked by default. Set `SIMPLE_CONTEXT_LIMITER_ALLOW_NON_HTTP_FETCH=1` if you explicitly need schemes such as `data:` for local testing.
 HTTP(S) fetches are not restricted to public internet hosts. `fetch` can access `localhost`, private network addresses, and other HTTP services reachable from the machine running the MCP server. Only enable simple-context-limiter for agents you trust with that local access.
 
@@ -225,19 +225,18 @@ Shows aggregate savings statistics for the current project by default. Use `mode
 
 When an LLM calls normal shell or web tools, the entire output can enter the model context: every log line, every HTML tag, every navigation bar. simple-context-limiter gives the model smaller MCP tools that return only useful previews by default.
 
-Large output is returned as head + tail:
+Large output is returned as head + tail with compact ASCII truncation markers:
 
 ```text
-╔══ 1200 lines · 46.9 KB · showing first 24 + last 36 ══╗
+[truncated: 1200 lines, 46.9 KB; showing first 24 + last 36]
 ...
-╟── … 1140 lines omitted … ──╢
+[omitted: 1140 lines]
 ...
-╚══════════════════════════════════════════════════════════╝
 ```
 
 The response always includes `_meta.truncated`. If it is `true`, the LLM can re-run with a higher `maxLines` or `maxBytes`, pre-filter the command, read a narrower `read` line range, or fall back to the native client tool when every line is genuinely needed.
 
-Each tool response also reports compact savings stats in `_meta`: `returnedBytes`, `savedBytes`, `savedPercent`, and `estimatedTokensSaved`. Token savings are approximate and use `savedBytes / 4` as a dependency-free estimate. In `usage` `mode: "stats"`, those names describe aggregate usage stats; the formatted response savings use `responseReturnedBytes`, `responseSavedBytes`, `responseSavedPercent`, and `responseEstimatedTokensSaved`.
+Each tool response also reports compact savings stats in `_meta.response`: `totalBytes`, `returnedBytes`, `savedBytes`, `savedPercent`, `estimatedTokensSaved`, and `truncated`. Common top-level aliases such as `_meta.returnedBytes` and `_meta.savedBytes` are kept for compatibility. Empty/no-result responses set `_meta.empty: true` plus a compact `emptyReason` such as `no_matches`, `no_output`, or `no_diff`. Token savings are approximate and use `savedBytes / 4` as a dependency-free estimate. In `usage` `mode: "stats"`, top-level totals describe aggregate usage stats; formatted response savings are available in `_meta.response` and the legacy `responseReturnedBytes`, `responseSavedBytes`, `responseSavedPercent`, and `responseEstimatedTokensSaved` fields.
 
 `maxBytes` controls the formatted response preview size and accepts values from 1024 to 32768. It does not raise the separate file-read or download safety caps.
 
@@ -258,13 +257,27 @@ Native shell, read, fetch, or diff tools remain appropriate when complete output
 
 ## Errors
 
-Tool calls use standard JSON-RPC error codes:
+Protocol and validation failures use standard JSON-RPC errors:
 
-- `-32601` for unknown tools or methods
-- `-32602` for invalid arguments, such as wrong types or out-of-range limits
-- `-32000` for runtime failures, such as command exits, missing `rg`, HTTP errors, or network failures
+- `-32601` for unknown methods or unknown tools
+- `-32602` for invalid JSON-RPC or tool-call parameters, such as wrong types or out-of-range limits
+- `-32002` when a request is made before `initialize` plus `notifications/initialized`
 
-When available, `error.data` includes diagnostic fields. Command failures can include `exitCode`, `signal`, `stdout`, and `stderr`. Fetch failures can include `httpStatus`, `httpStatusText`, `url`, and low-level `cause` details.
+Runtime failures inside a valid `tools/call` usually return a normal JSON-RPC response whose `result.isError` is `true`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [{ "type": "text", "text": "Command failed: npm test (exited with code 1)\n\ndetails:\nexitCode: 1\n\nstderr:\nAssertionError: expected true" }],
+    "isError": true,
+    "_meta": { "exitCode": 1, "stderr": "AssertionError: expected true" }
+  }
+}
+```
+
+When available, JSON-RPC `error.data` or tool-result `_meta` includes diagnostic fields. Command failures can include `exitCode`, `signal`, `stdout`, and `stderr`. Fetch failures can include `httpStatus`, `httpStatusText`, `url`, and low-level `cause` details.
 
 ## Requirements
 
@@ -374,6 +387,7 @@ For Pi:
 | `SIMPLE_CONTEXT_LIMITER_MAX_RPC_LINE_BYTES` | `1048576` | Max JSON-RPC input line bytes accepted before rejecting the request |
 | `SIMPLE_CONTEXT_LIMITER_MAX_RPC_BATCH_SIZE` | `50` | Max JSON-RPC requests accepted in one batch |
 | `SIMPLE_CONTEXT_LIMITER_MAX_RPC_BATCH_CONCURRENCY` | `4` | Max JSON-RPC batch items processed concurrently |
+| `SIMPLE_CONTEXT_LIMITER_MAX_RPC_TOOL_CONCURRENCY` | same as batch concurrency | Max `tools/call` executions active globally across all requests and batches |
 | `SIMPLE_CONTEXT_LIMITER_READ_RANGE_TIMEOUT_MS` | `120000` | Max time spent scanning for a requested line range |
 | `SIMPLE_CONTEXT_LIMITER_CACHE_MAX_ENTRIES` | `200` | Max cached fetch entries kept on disk |
 | `SIMPLE_CONTEXT_LIMITER_CACHE_MAX_BYTES` | `52428800` | Max cached fetch content bytes kept on disk |

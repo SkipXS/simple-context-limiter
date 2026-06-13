@@ -4,7 +4,7 @@ import { StringDecoder } from "node:string_decoder";
 import { MAX_BYTES, MAX_LINES, MAX_READ_BYTES, READ_RANGE_TIMEOUT_MS } from "../constants.js";
 import { decodeUtf8, formatOutput } from "../output.js";
 import { recordStats } from "../stats.js";
-import { invalidParams, validateInteger } from "./shared.js";
+import { invalidParams, omission, relativePath, validateInteger, withResponseMeta } from "./shared.js";
 
 const READ_MANY_CONCURRENCY = 4;
 
@@ -89,12 +89,12 @@ export async function readManyTool(args, toolName = "read") {
   const results = await mapLimited(previewArgsList, READ_MANY_CONCURRENCY, (previewArgs) => readFilePreview(previewArgs, toolName));
 
   const combined = results
-    .map((result) => `--- ${result._meta.path} ---\n${result.content[0].text}`)
+    .map((result) => `--- ${result._meta.relativePath ?? result._meta.path} ---\n${result.content[0].text}`)
     .join("\n\n");
   const formatted = formatOutput(combined, totalLineLimit, totalLimit);
   const totalBytes = results.reduce((sum, result) => sum + result._meta.totalBytes, 0);
   const contextSavings = savingsForReturnedBytes(totalBytes, formatted.returnedBytes);
-  const meta = {
+  const meta = withResponseMeta({
     filesRequested: paths.length,
     filesRead: results.length,
     maxTotalLines: totalLineLimit,
@@ -104,6 +104,7 @@ export async function readManyTool(args, toolName = "read") {
     truncated: formatted.truncated || results.some((result) => result._meta.truncated),
     files: results.map((result) => ({
       path: result._meta.path,
+      relativePath: result._meta.relativePath,
       sizeBytes: result._meta.sizeBytes,
       totalBytes: result._meta.totalBytes,
       returnedBytes: result._meta.returnedBytes,
@@ -119,7 +120,7 @@ export async function readManyTool(args, toolName = "read") {
       rangeLimited: result._meta.rangeLimited,
       scanTimedOut: result._meta.scanTimedOut,
     })),
-  };
+  });
   await recordStats(toolName, meta);
 
   return {
@@ -167,13 +168,16 @@ async function readFilePreview(args, toolName) {
     : await readLimitedFile(resolved, stat.size, MAX_READ_BYTES);
   const formatted = formatOutput(text, lineLimit, byteLimit);
   const contextSavings = savingsForReturnedBytes(stat.size, formatted.returnedBytes);
-  const meta = {
+  const meta = withResponseMeta({
     path: resolved,
+    relativePath: relativePath(resolved),
     sizeBytes: stat.size,
     totalLines: formatted.totalLines,
     totalBytes: stat.size,
     ...contextSavings,
     truncated: formatted.truncated || rangeLimited || limited || scanLimited || scanTimedOut,
+    empty: text === "",
+    emptyReason: text === "" ? "empty_file" : undefined,
     fileReadLimited: limited,
     fromLine: range?.fromLine,
     toLine: range?.toLine === Infinity ? undefined : range?.toLine,
@@ -183,7 +187,7 @@ async function readFilePreview(args, toolName) {
     scanLimited,
     rangeLimited,
     scanTimedOut,
-  };
+  });
   return {
     content: [{ type: "text", text: formatted.text }],
     _meta: meta,
@@ -379,7 +383,7 @@ async function readLimitedFile(filePath, size, maxBytes) {
     return {
       text: [
         decodeUtf8(head.subarray(0, headRead.bytesRead), { trimEnd: true }),
-        `╟── … file content omitted after ${(maxBytes / 1024).toFixed(1)} KB preview … ──╢`,
+        omission("bytes", Math.max(0, size - maxBytes)),
         decodeUtf8(tail.subarray(0, tailRead.bytesRead), { trimStart: true }),
       ].join("\n"),
       limited: true,
