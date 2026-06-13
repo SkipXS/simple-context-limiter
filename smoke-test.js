@@ -208,6 +208,11 @@ try {
   assert.equal(emptyOutput.totalBytes, 0);
   assert.ok(emptyOutput.returnedBytes > 0);
   assert.equal(formatOutput("one\n").totalLines, 1);
+  const lineLimited = formatOutput(Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n"), 10);
+  assert.equal(lineLimited.truncated, true);
+  assert.equal(lineLimited.text.split("\n").length, 10);
+  assert.match(lineLimited.text, /\[truncated: 20 lines, .*showing first 3 \+ last 5; raise maxLines\/maxBytes\]/);
+  assert.match(lineLimited.text, /\[omitted: 12 lines\]/);
   const customByteLimit = formatOutput("x".repeat(8192), 60, 1024);
   assert.equal(customByteLimit.truncated, true);
   assert.ok(Buffer.byteLength(customByteLimit.text, "utf8") <= 1024);
@@ -377,11 +382,15 @@ try {
   assert.equal(findSchemaKeyword(listed.result.tools.map((tool) => tool.inputSchema), ["oneOf", "allOf", "const", "not"]), undefined);
   const runSchema = listed.result.tools.find((tool) => tool.name === "sc-run").inputSchema;
   assert.equal(runSchema.properties.maxLines.maximum, 500);
+  assert.match(runSchema.properties.maxLines.description, /Content line cap/);
   const searchSchema = listed.result.tools.find((tool) => tool.name === "sc-search").inputSchema;
   assert.deepEqual(searchSchema.properties.engine.enum, ["text", "ast"]);
   assert.equal(searchSchema.properties.maxLines.maximum, 500);
+  assert.match(searchSchema.properties.include.description, /glob, not regex/);
   const discoverSchema = listed.result.tools.find((tool) => tool.name === "sc-discover").inputSchema;
   assert.deepEqual(discoverSchema.properties.mode.enum, ["summary", "files", "tree", "outline"]);
+  const fetchToolInfo = listed.result.tools.find((tool) => tool.name === "sc-fetch");
+  assert.match(fetchToolInfo.description, /no JS rendering/);
   const diffSchema = listed.result.tools.find((tool) => tool.name === "sc-diff").inputSchema;
   assert.deepEqual(diffSchema.properties.mode.enum, ["diff", "status", "history"]);
   assert.equal(diffSchema.properties.maxLines.maximum, 500);
@@ -390,7 +399,9 @@ try {
   const readSchema = listed.result.tools.find((tool) => tool.name === "sc-read").inputSchema;
   assert.equal(readSchema.type, "object");
   assert.deepEqual(readSchema.anyOf, [{ required: ["path"] }, { required: ["paths"] }]);
-  assert.match(readSchema.properties.paths.description, /Extra file paths/);
+  assert.match(readSchema.properties.path.description, /Primary file/);
+  assert.match(readSchema.properties.paths.description, /Standalone list or extra files/);
+  assert.match(readSchema.properties.paths.description, /Ranges apply only/);
 
   const slowCommand = nodeEvalCommand("setTimeout(() => {}, 500)");
   const limitedStart = Date.now();
@@ -637,7 +648,8 @@ try {
   assert.ok(byteLimitedRun.result._meta.response.returnedBytes <= 1024);
   assert.ok(byteLimitedRun.result._meta.response.savedBytes > 0);
   assert.equal((byteLimitedRun.result.content[0].text.match(/\[truncated:/g) ?? []).length, 1);
-  assert.match(byteLimitedRun.result.content[0].text, /\[retry: raise maxLines\/maxBytes/);
+  assert.match(byteLimitedRun.result.content[0].text, /raise maxLines\/maxBytes/);
+  assert.doesNotMatch(byteLimitedRun.result.content[0].text, /\[retry:/);
   assert.doesNotMatch(byteLimitedRun.result.content[0].text, /sc-logs/);
 
   const outputTooLargeCommand = isPowerShellConfigured()
@@ -762,6 +774,21 @@ try {
   assert.equal(standaloneStackBeforeErrorLogs.result._meta.truncated, true);
   assert.match(standaloneStackBeforeErrorLogs.result.content[0].text, /Error: final boom/);
   assert.doesNotMatch(standaloneStackBeforeErrorLogs.result.content[0].text, /at warn/);
+
+  const overlappingLogs = await request("tools/call", {
+    name: "sc-logs",
+    arguments: {
+      command: nodeEvalCommand("console.log('start'); console.warn('warn: maybe bad'); console.error('Error: boom'); console.error('    at test.js:1:2'); process.exit(1)"),
+      maxBlocks: 5,
+      contextLines: 1,
+      maxBytes: 4096,
+    },
+  });
+  assert.equal(overlappingLogs.result._meta.blocksFound, 1);
+  assert.equal(overlappingLogs.result._meta.blocksShown, 1);
+  assert.doesNotMatch(overlappingLogs.result.content[0].text, /Block 2/);
+  assert.equal((overlappingLogs.result.content[0].text.match(/warn: maybe bad/g) ?? []).length, 1);
+  assert.equal((overlappingLogs.result.content[0].text.match(/Error: boom/g) ?? []).length, 1);
 
   const logsFallbackCommand = isPowerShellConfigured()
     ? `& ${shellQuote(process.execPath)} -e "for (let i = 0; i < 30; i++) console.log('plain ' + i)"`

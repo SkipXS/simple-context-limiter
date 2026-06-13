@@ -220,6 +220,7 @@ function mergeLogRanges(ranges) {
 }
 
 function shouldMergeLogRanges(previous, range) {
+  if (range.start <= previous.end) return true;
   if (previous.severity === range.severity) return true;
   return previous.severity >= 3 && range.severity >= 3;
 }

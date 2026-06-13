@@ -36,11 +36,13 @@ export function formatOutput(output, maxLines = MAX_LINES, maxBytes = DEFAULT_BY
     return withSavings(formatByteSummary(output, totalBytes, byteLimit), totalLines, totalBytes, true);
   }
 
-  const head = Math.floor(limit * 0.4);
-  const tail = limit - head;
+  const markerLines = 2;
+  const contentLines = Math.max(0, limit - markerLines);
+  const head = Math.floor(contentLines * 0.4);
+  const tail = contentLines - head;
   const omittedLines = Math.max(0, totalLines - head - tail);
   const summary = [
-    `[truncated: ${totalLines} lines, ${(totalBytes / 1024).toFixed(1)} KB; showing first ${head} + last ${tail}]`,
+    `[truncated: ${totalLines} lines, ${(totalBytes / 1024).toFixed(1)} KB; showing first ${head} + last ${tail}; raise maxLines/maxBytes]`,
     ...lines.slice(0, head),
     `[omitted: ${omittedLines} lines]`,
     ...lines.slice(-tail),
@@ -132,7 +134,7 @@ function buildByteSummary(buffer, totalBytes, headBytes, tailBytes) {
   const omittedBytes = Math.max(0, totalBytes - headBytes - tailBytes);
 
   return [
-    `[truncated: ${(totalBytes / 1024).toFixed(1)} KB; showing first ${(headBytes / 1024).toFixed(1)} KB + last ${(tailBytes / 1024).toFixed(1)} KB]`,
+    `[truncated: ${(totalBytes / 1024).toFixed(1)} KB; showing first ${(headBytes / 1024).toFixed(1)} KB + last ${(tailBytes / 1024).toFixed(1)} KB; raise maxLines/maxBytes]`,
     decodeUtf8(buffer.subarray(0, headBytes), { trimEnd: true }),
     `[omitted: ${(omittedBytes / 1024).toFixed(1)} KB]`,
     decodeUtf8(buffer.subarray(tailStart), { trimStart: true }),

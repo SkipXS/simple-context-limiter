@@ -29,7 +29,7 @@ export const tools = {
             type: "integer",
             minimum: 10,
             maximum: 500,
-            description: "Line cap. Default: 60.",
+            description: "Content line cap. Default: 60.",
           },
           maxBytes: {
             type: "integer",
@@ -71,7 +71,7 @@ export const tools = {
             type: "integer",
             minimum: 10,
             maximum: 500,
-            description: "Line cap. Default: 120.",
+            description: "Content line cap. Default: 120.",
           },
           maxBytes: {
             type: "integer",
@@ -92,23 +92,23 @@ export const tools = {
     {
       name: "read",
       description:
-        "Read bounded UTF-8 file previews. Use fromLine/toLine for targeted ranges.",
+        "Read bounded UTF-8 file previews. Use path/fromLine/toLine for one ranged file.",
       inputSchema: {
         type: "object",
         properties: {
-          path: { type: "string", description: "File path; ranged when fromLine/toLine set." },
+          path: { type: "string", description: "Primary file path; ranged when fromLine/toLine set." },
           paths: {
             type: "array",
             minItems: 1,
             maxItems: 20,
             items: { type: "string" },
-            description: "Extra file paths, max 20. With ranges, extra files are previewed normally.",
+            description: "Standalone list or extra files, max 20. Ranges apply only to path/one file.",
           },
           maxLines: {
             type: "integer",
             minimum: 10,
             maximum: 500,
-            description: "Line cap. Default: 60; per-file in paths mode.",
+            description: "Content line cap. Default: 60; per-file in paths mode.",
           },
           lineNumbers: { type: "boolean", description: "Number ranged lines. Default: false." },
           maxBytes: {
@@ -165,7 +165,7 @@ export const tools = {
           engine: { type: "string", enum: ["text", "ast"], description: "Default: text; ast uses ast-grep." },
           pattern: { type: "string", description: "Regex for text; ast-grep pattern for ast." },
           path: { type: "string", description: "Search path. Default: ." },
-          include: { type: "string", description: "Include glob, e.g. *.js." },
+          include: { type: "string", description: "Include glob, not regex, e.g. *.js." },
           language: { type: "string", description: "ast-grep language when not inferred." },
           contextLines: { type: "integer", minimum: 0, maximum: 10, description: "Context lines. Default: 0." },
           maxMatches: {
@@ -178,7 +178,7 @@ export const tools = {
             type: "integer",
             minimum: 10,
             maximum: 500,
-            description: "Line cap. Default: 60.",
+            description: "Content line cap. Default: 60.",
           },
           maxBytes: {
             type: "integer",
@@ -204,7 +204,7 @@ export const tools = {
           maxDepth: { type: "integer", minimum: 1, maximum: 10, description: "tree: depth cap. Default: 3." },
           maxEntries: { type: "integer", minimum: 1, maximum: 2000, description: "tree: entry cap. Default: 200." },
           maxSymbols: { type: "integer", minimum: 1, maximum: 1000, description: "outline: symbol cap. Default: 200." },
-          maxLines: { type: "integer", minimum: 10, maximum: 500, description: "Line cap. Default: 60." },
+          maxLines: { type: "integer", minimum: 10, maximum: 500, description: "Content line cap. Default: 60." },
           maxBytes: { type: "integer", minimum: 1024, maximum: MAX_BYTES, description: "Byte cap. Default: 32768." },
         },
       },
@@ -212,7 +212,7 @@ export const tools = {
     {
       name: "fetch",
       description:
-        "Fetch bounded readable text from HTTP(S), including reachable localhost/private URLs. Cached by default.",
+        "Fetch bounded readable text from HTTP(S), including localhost/private URLs. Lightweight HTML stripping; no JS rendering.",
       inputSchema: {
         type: "object",
         properties: {
@@ -222,7 +222,7 @@ export const tools = {
             type: "integer",
             minimum: 10,
             maximum: 500,
-            description: "Line cap. Default: 60.",
+            description: "Content line cap. Default: 60.",
           },
           maxBytes: {
             type: "integer",
@@ -267,7 +267,7 @@ export const tools = {
             type: "integer",
             minimum: 10,
             maximum: 500,
-            description: "Line cap. Default: 60.",
+            description: "Content line cap. Default: 60.",
           },
           maxBytes: {
             type: "integer",
@@ -287,7 +287,7 @@ export const tools = {
         properties: {
           mode: { type: "string", enum: ["stats", "report", "guidance"], description: "Mode. Default: stats." },
           maxEvents: { type: "integer", minimum: 1, maximum: 10000, description: "Event cap. Default: 1000." },
-          maxLines: { type: "integer", minimum: 10, maximum: 500, description: "Line cap. Default: 60." },
+          maxLines: { type: "integer", minimum: 10, maximum: 500, description: "Content line cap. Default: 60." },
           maxBytes: { type: "integer", minimum: 1024, maximum: MAX_BYTES, description: "Byte cap. Default: 32768." },
         },
       },

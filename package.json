@@ -18,6 +18,7 @@
   "files": [
     "server.js",
     "src/",
+    "scripts/",
     "check-syntax.js",
     "smoke-test.js",
     "pack-smoke-test.js",
@@ -25,7 +26,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "check": "node check-syntax.js",
+    "check": "node check-syntax.js && node scripts/output-quality-check.js",
+    "quality": "node scripts/output-quality-check.js",
     "test": "node smoke-test.js",
     "release:check": "npm pack --dry-run && node pack-smoke-test.js",
     "prepack": "npm run check && npm test"

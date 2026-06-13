@@ -17,13 +17,21 @@ A minimal MCP server that keeps large command, log, file, search, repo-discovery
 
 Tool names exposed by `tools/list` are prefixed with `sc-` to avoid collisions with built-in client tools such as `read` or `search`. Use the prefixed names for all calls; unprefixed legacy names are not exposed or accepted.
 
+## Agent Recipes
+
+- Unknown repo: `sc-discover {"mode":"summary"}` → `sc-discover {"mode":"tree"}` → targeted `sc-search`/`sc-read`.
+- Failing tests/builds: `sc-logs` on the test command → `sc-read` with `fromLine`/`toLine` for implicated files.
+- Reviewing changes: `sc-diff` first → `sc-read` only touched or referenced files.
+- Huge file/log: `sc-search` for anchors first → narrow `sc-read` ranges instead of broad reads.
+- Truncated output: inspect `_meta.truncation.retryHint`; narrow path/query/range before raising limits.
+
 ## Security Model
 
 simple-context-limiter is intended for trusted local MCP clients. The `sc-run` tool executes shell commands on the machine running the server, and `sc-fetch` can access any HTTP(S) service reachable from that machine, including localhost and private networks. This is by design: the server limits output volume, not the authority of the client. Do not expose it to untrusted agents, prompts, or remote users unless you add your own sandboxing or network policy.
 
 ### `sc-run`
 
-Runs a shell command and returns stdout. Output is automatically truncated when it exceeds 60 lines or 32 KB. Override with `maxLines` up to 500 or `maxBytes` per call.
+Runs a shell command and returns stdout. Output is automatically truncated when it exceeds 60 content lines or 32 KB. Override with `maxLines` up to 500 or `maxBytes` per call.
 Commands that exit successfully but write diagnostics to stderr will not include stderr in `sc-run`; use `sc-logs` when stderr or mixed command output matters. In that case the response appends `[stderr omitted: ...]`, and `_meta.stderrOmitted: true` plus `_meta.stderrBytes` report that stderr existed without leaking its text.
 
 ```json
@@ -64,7 +72,7 @@ Unlike `sc-run`, non-zero exits return a normal tool response with `exitCode`, `
 
 ### `sc-read`
 
-Reads local UTF-8 text files and returns safe previews. Provide `path` for one file or `paths` for up to 20 files; if both are provided, they are merged as `[path, ...paths]` with duplicates ignored. Output is automatically truncated when it exceeds 60 lines or 32 KB. Override with `maxLines` up to 500 or `maxBytes` per call. In multi-file mode, `maxLines` and `maxBytes` act as per-file defaults unless `maxLinesPerFile` or `maxBytesPerFile` are set. `sc-read` allows up to 500 lines for targeted single-file ranges while keeping the 32 KB response cap.
+Reads local UTF-8 text files and returns safe previews. Provide `path` for one primary file or `paths` for a standalone list of up to 20 files; if both are provided, they are merged as `[path, ...paths]` with duplicates ignored. Output is automatically truncated when it exceeds 60 content lines or 32 KB. Override with `maxLines` up to 500 or `maxBytes` per call. In multi-file mode, `maxLines` and `maxBytes` act as per-file defaults unless `maxLinesPerFile` or `maxBytesPerFile` are set. `sc-read` allows up to 500 lines for targeted single-file ranges while keeping the 32 KB response cap.
 
 ```json
 { "path": "logs/app.log", "maxLines": 100, "maxBytes": 16384 }
@@ -98,7 +106,7 @@ The tool accepts at most 20 merged paths. Each file uses the same preview behavi
 
 ### `sc-search`
 
-Searches local files with ripgrep by default and returns bounded `file:line:match` output. Pass `contextLines` when you need small surrounding context windows. Override with `maxMatches`, `maxLines`, or `maxBytes` per call. When matches are limited, the final line says how many were shown and that more matches exist.
+Searches local files with ripgrep by default and returns bounded `file:line:match` output. Pass `contextLines` when you need small surrounding context windows. Override with `maxMatches`, `maxLines`, or `maxBytes` per call. `include` is a ripgrep glob, not a regex. When matches are limited, the final line says how many were shown and that more matches exist.
 Relative search paths are resolved from the MCP server's `process.cwd()`.
 
 ```json
@@ -183,7 +191,7 @@ Opt out by setting `SIMPLE_CONTEXT_LIMITER_USAGE_LOG=0` or `SIMPLE_CONTEXT_LIMIT
 
 ### `sc-fetch`
 
-Fetches an `http` or `https` URL, strips HTML to readable text, caches the result for 1 hour, and truncates large output. Override with `maxLines` up to 500 or `maxBytes` per call.
+Fetches an `http` or `https` URL, strips HTML to readable text, caches the result for 1 hour, and truncates large output. HTML extraction is lightweight text stripping, not browser/JavaScript rendering. Override with `maxLines` up to 500 or `maxBytes` per call.
 
 ```json
 { "url": "https://example.com/docs", "force": false, "maxLines": 100, "maxBytes": 16384 }
@@ -249,11 +257,11 @@ The response always includes `_meta.truncated`; treat it as the authoritative tr
 
 Each tool response reports compact savings stats in `_meta.response`: `totalBytes`, `returnedBytes`, `savedBytes`, `savedPercent`, and `estimatedTokensSaved`. `_meta.response.truncated` is kept as a compatibility mirror of `_meta.truncated`, not a separate retry signal. Byte counters are not duplicated at the top level of `_meta`; top-level fields are reserved for tool-specific facts such as `durationMs`, `emptyReason`, `exitCode`, `stderrOmitted`, `stderrBytes`, `shownMatches`, or `filesChanged`. Empty/no-result responses set `_meta.empty: true` plus a compact reason such as `no_matches`, `no_output`, or `no_diff`. Token savings are approximate and use `savedBytes / 4` as a dependency-free estimate. In `sc-usage` `mode: "stats"`, top-level totals describe aggregate usage stats while formatted response savings remain in `_meta.response`.
 
-`maxLines` accepts values from 10 to 500 across tools. `maxBytes` defaults to 32768 and controls the formatted response preview size; it accepts values from 1024 to 65536 by default. It does not raise the separate file-read or download safety caps.
+`maxLines` accepts values from 10 to 500 across tools and caps selected content lines; compact truncation/retry marker lines may add a few display lines. `maxBytes` defaults to 32768 and controls the formatted response preview size; it accepts values from 1024 to 65536 by default. It does not raise the separate file-read or download safety caps.
 
 Aggregate stats are stored globally in `~/.simple-context-limiter/stats.json`. They contain only numeric counters grouped by project path and tool name, not commands, file paths, URLs, or content.
 
-The published `tools/list` schemas preserve strict `additionalProperties: false` validation and describe high-risk semantics: `sc-run`/`sc-logs` execute local shell commands, `sc-search` uses regex patterns for text and ast-grep patterns for AST mode, `sc-fetch` is HTTP(S) by default but can reach localhost/private networks, and `sc-diff` status excludes untracked files unless staged.
+The published `tools/list` schemas preserve strict `additionalProperties: false` validation and describe high-risk semantics: `sc-run`/`sc-logs` execute local shell commands, `sc-search` uses regex patterns for text and ast-grep patterns for AST mode, `sc-search.include` is a glob while `sc-discover.include` is a regex, `sc-fetch` is HTTP(S) by default but can reach localhost/private networks, and `sc-diff` status excludes untracked files unless staged.
 
 The server also injects short MCP startup instructions that tell the LLM to prefer these bounded tools for shell output, logs, file previews, local search, repo discovery, readable web pages, git previews, and usage guidance. Native shell, read, fetch, or diff tools remain appropriate when complete output, exact stderr/exit behavior, interactivity, raw HTML, or unsupported behavior is specifically needed. If `_meta.truncated` is true, use `_meta.truncation.reason/retryHint` and retry with a narrower query/range/path or higher `maxLines`/`maxBytes` before falling back to native tools.
 
