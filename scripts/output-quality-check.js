@@ -206,7 +206,8 @@ async function assertToolOutputGoldens() {
       longBPath,
       "<tmp>/long-b.txt",
     );
-    assert.match(normalizedReadMany, /^\[truncated: .*file-bounded/m);
+    assert.match(normalizedReadMany, /^\[truncated: multi-file total limit;/m);
+    assert.doesNotMatch(normalizedReadMany, /raise maxLines\/maxBytes/);
     assert.match(normalizedReadMany, /\[retry: raise maxTotalLines\/maxTotalBytes or per-file limits\]/);
     assert.equal(truncatedReadMany._meta.truncated, true);
   } finally {

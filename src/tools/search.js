@@ -221,10 +221,14 @@ export async function searchTool(args) {
   const matches = result.lines.map(normalizeRgMatchLine);
   const shown = matches.slice(0, limit);
   const matchLimited = result.truncated || result.outputTooLarge || matches.length > limit;
-  const originalText = matches.join("\n");
-  const text = matchLimited
+  const originalBody = matches.join("\n");
+  const body = matchLimited
     ? [...shown, truncatedMatchesLine(shown.length)].join("\n")
-    : originalText || "(no matches)";
+    : originalBody || "(no matches)";
+  const text = body === "(no matches)"
+    ? body
+    : addSearchHeader(body, { engine, pattern, searchPath: commandSearchPath, include, shownMatches: shown.length });
+  const originalText = originalBody ? addSearchHeader(originalBody, { engine, pattern, searchPath: commandSearchPath, include, shownMatches: matches.length }) : body;
   const formatted = formatOutput(text, lineLimit, byteLimit);
   const searchSavings = matchLimited ? savingsForText(originalText, formatted.text) : savingsMeta(formatted);
   const truncated = matchLimited || formatted.truncated;
@@ -257,6 +261,24 @@ function normalizeRgMatchLine(line) {
 function truncatedMatchesLine(shownMatches) {
   const noun = shownMatches === 1 ? "match" : "matches";
   return `[truncated: match limit; ${shownMatches} ${noun} shown; more exist; raise maxMatches or narrow pattern/path/include]`;
+}
+
+function addSearchHeader(body, { engine, pattern, searchPath, include, language, contextLines, shownMatches }) {
+  const noun = shownMatches === 1 ? "match" : "matches";
+  const parts = [
+    `Search: ${engine} ${quoteCompact(pattern)} in ${searchPath || "."}`,
+    include ? `include ${include}` : undefined,
+    language ? `lang ${language}` : undefined,
+    contextLines ? `context ${contextLines}` : undefined,
+    `${shownMatches} ${noun} shown`,
+  ].filter(Boolean);
+  return `${parts.join("; ")}\n${body}`;
+}
+
+function quoteCompact(value, maxLength = 80) {
+  const compact = String(value).replace(/\s+/g, " ").trim();
+  const clipped = compact.length > maxLength ? `${compact.slice(0, maxLength - 3)}...` : compact;
+  return JSON.stringify(clipped);
 }
 
 function searchTruncationReason({ matchLimited, result, formatted, maxLines, maxBytes }) {
@@ -322,9 +344,12 @@ async function astSearchTool(pattern, searchPath, include, language, contextLine
   const matches = result.lines.map(parseAstGrepLine).filter(Boolean);
   const shown = matches.slice(0, maxMatches);
   const matchLimited = result.truncated || result.outputTooLarge || matches.length > maxMatches;
-  const text = shown.length > 0
+  const body = shown.length > 0
     ? formatAstMatches(shown, matchLimited)
     : "(no matches)";
+  const text = body === "(no matches)"
+    ? body
+    : addSearchHeader(body, { engine: "ast", pattern, searchPath, include, language, contextLines, shownMatches: shown.length });
   const formatted = formatOutput(text, maxLines, maxBytes);
   const truncated = matchLimited || formatted.truncated;
   const meta = withResponseMeta({
@@ -447,7 +472,10 @@ async function searchWithContext(rg, pattern, searchPath, include, contextLines,
   }
 
   const limited = limitRgContext(result.lines, maxMatches, contextLines);
-  const text = limited.text || "(no matches)";
+  const body = limited.text || "(no matches)";
+  const text = body === "(no matches)"
+    ? body
+    : addSearchHeader(body, { engine: "text", pattern, searchPath, include, contextLines, shownMatches: limited.shownMatches });
   const formatted = formatOutput(text, maxLines, maxBytes);
   const truncated = limited.matchLimited || result.truncated || result.outputTooLarge || formatted.truncated;
   const meta = withResponseMeta({

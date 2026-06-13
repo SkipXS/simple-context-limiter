@@ -6,14 +6,14 @@ import { recordStats } from "../stats.js";
 import { formatTruncationReason, invalidParams, savingsMeta, toolTextResult, truncationMeta, validateInteger, withResponseMeta } from "./shared.js";
 
 function htmlToText(html) {
-  return html
+  const text = html
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .replace(/<nav[\s\S]*?<\/nav>/gi, "")
     .replace(/<footer[\s\S]*?<\/footer>/gi, "")
     .replace(/<header[\s\S]*?<\/header>/gi, "")
     .replace(/<(br|hr)\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|h[1-6]|li|tr|section|article|pre|table)>/gi, "\n")
+    .replace(/<\/(title|p|div|h[1-6]|li|tr|section|article|pre|table)>/gi, "\n")
     .replace(/<[^>]*>/g, "")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
@@ -23,10 +23,18 @@ function htmlToText(html) {
     .replace(/&(apos|mdash|ndash|hellip|copy|reg);/gi, decodeNamedHtmlEntity)
     .replace(/&#(x[0-9a-f]+|\d+);/gi, decodeNumericHtmlEntity)
     .replace(/&nbsp;/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/ +/g, " ")
-    .replace(/^[ \t]+/gm, "")
-    .trim();
+    .replace(/ +/g, " ");
+
+  return normalizeHtmlText(text);
+}
+
+function normalizeHtmlText(text) {
+  const lines = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const deduped = [];
+  for (const line of lines) {
+    if (line !== deduped.at(-1)) deduped.push(line);
+  }
+  return deduped.join("\n");
 }
 
 function decodeNamedHtmlEntity(match, name) {

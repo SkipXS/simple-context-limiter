@@ -274,12 +274,21 @@ function formatReadManyOutput(results, maxLines, maxBytes) {
 
 function readManyOutputSection(result) {
   const name = result._meta.relativePath ?? result._meta.path;
+  const text = stripNestedReadRetryHints(result.content[0].text);
   return {
     name,
     header: `--- ${name} ---`,
-    text: result.content[0].text,
-    contentLines: result.content[0].text.split("\n"),
+    text,
+    contentLines: text.split("\n"),
   };
+}
+
+function stripNestedReadRetryHints(text) {
+  return text
+    .replace(/^\[truncated:/gm, "[file truncated:")
+    .replaceAll("; raise maxLines/maxBytes", "")
+    .replaceAll("; increase maxLines/maxBytes", "")
+    .replace(/\n?\[retry: [^\]]+\]/g, "");
 }
 
 function buildReadManySummary(sections, totalLines, totalBytes, maxLines) {
@@ -288,14 +297,23 @@ function buildReadManySummary(sections, totalLines, totalBytes, maxLines) {
   const headBudget = Math.max(1, Math.floor(available * 0.4));
   const tailBudget = Math.max(1, available - headBudget);
   const head = takeReadManyHead(sections, headBudget);
-  const tail = takeReadManyTail(sections, tailBudget);
+  const tail = markContinuedTailHeaders(takeReadManyTail(sections, tailBudget), head);
 
   return [
-    `[truncated: ${totalLines} lines, ${(totalBytes / 1024).toFixed(1)} KB; showing file-bounded first ${head.length} + last ${tail.length}]`,
+    `[truncated: multi-file total limit; ${totalLines} lines, ${(totalBytes / 1024).toFixed(1)} KB; showing first ${head.length} + last ${tail.length}]`,
     ...head,
     "[omitted: middle file content]",
     ...tail,
   ].join("\n");
+}
+
+function markContinuedTailHeaders(tail, head) {
+  const headHeaders = new Set(head.filter(isReadManyHeaderLine));
+  return tail.map((line) => headHeaders.has(line) ? line.replace(/ ---$/, " continued ---") : line);
+}
+
+function isReadManyHeaderLine(line) {
+  return /^--- .+ ---$/.test(line);
 }
 
 function takeReadManyHead(sections, budget) {

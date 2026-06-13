@@ -943,7 +943,8 @@ try {
     arguments: { paths: [largeFile, dashFile], maxLinesPerFile: 20, maxTotalLines: 10, maxTotalBytes: 4096 },
   });
   const boundaryText = boundaryTruncatedReadMany.result.content[0].text;
-  assert.match(boundaryText, /file-bounded/);
+  assert.match(boundaryText, /multi-file total limit/);
+  assert.doesNotMatch(boundaryText, /raise maxLines\/maxBytes/);
   assert.ok(boundaryText.lastIndexOf("---") < boundaryText.indexOf("-needle") || boundaryText.lastIndexOf("---", boundaryText.indexOf("-needle")) >= 0);
   assert.match(boundaryText, /--- .*dash\.txt ---[\s\S]*-needle/);
 
@@ -1164,7 +1165,8 @@ try {
       arguments: { pattern: "## Version Pinning", path: join(import.meta.dirname, "README.md"), maxMatches: 1 },
     });
     assert.ok(absoluteRepoSearch.result, JSON.stringify(absoluteRepoSearch));
-    assert.match(absoluteRepoSearch.result.content[0].text, /^README\.md:/);
+    assert.match(absoluteRepoSearch.result.content[0].text, /^Search: text /);
+    assert.match(absoluteRepoSearch.result.content[0].text, /README\.md:/);
     assert.doesNotMatch(absoluteRepoSearch.result.content[0].text, new RegExp(import.meta.dirname.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")));
 
     const grepContext = await request("tools/call", {
